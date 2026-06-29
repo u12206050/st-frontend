@@ -69,6 +69,10 @@ export interface Actions {
         payload: BandSyncSyncStatus,
     ): void;
     [BandSyncActionTypes.MEMBER_SYNCED](context: AugmentedActionContext): void;
+    [BandSyncActionTypes.SET_FOLLOWING_LEADER_UPDATES](
+        context: AugmentedActionContext,
+        payload: boolean,
+    ): void;
     [BandSyncActionTypes.SESSION_SNAPSHOT](
         context: AugmentedActionContext,
         payload: BandSyncSession | null,
@@ -223,6 +227,18 @@ export const actions: ActionTree<State, RootState> & Actions = {
             return;
         }
         commit(BandSyncMutationTypes.SET_SYNC_STATUS, "inSync");
+    },
+
+    [BandSyncActionTypes.SET_FOLLOWING_LEADER_UPDATES]({ state, commit }, enabled) {
+        if (state.role !== "member") {
+            return;
+        }
+
+        commit(BandSyncMutationTypes.SET_FOLLOWING_LEADER_UPDATES, enabled);
+
+        if (!enabled) {
+            commit(BandSyncMutationTypes.SET_SYNC_STATUS, "outOfSync");
+        }
     },
 
     [BandSyncActionTypes.SESSION_SNAPSHOT]({ dispatch, commit }, session) {

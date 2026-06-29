@@ -31,6 +31,7 @@ export class BandSyncSongCoordinator {
             (state: RootState) => ({
                 role: state.bandSync.role,
                 syncStatus: state.bandSync.syncStatus,
+                followingLeaderUpdates: state.bandSync.followingLeaderUpdates,
                 sessionId: state.bandSync.sessionId,
                 sessionTransposition: state.bandSync.session?.transposition,
                 sessionSongNumber: state.bandSync.session?.songNumber,
@@ -42,24 +43,32 @@ export class BandSyncSongCoordinator {
                 sheetMusicTransposition: state.songs.sheetMusic?.transposition,
             }),
             () => {
-                this.onLocalChange();
-                this.onBandSyncState();
+                const session = this.store.state.bandSync.session;
+                const leaderChanged =
+                    session != null &&
+                    hasLeaderStateChangedComparedTo(
+                        session,
+                        this.lastSeenRemoteSession,
+                    );
+
+                this.onBandSyncState(leaderChanged);
+                this.onLocalChange(leaderChanged);
             },
         );
 
         const bandSync = this.store.state.bandSync;
-        const session = bandSync.session;
+        const initialSession = bandSync.session;
         if (
-            session &&
+            initialSession &&
             bandSync.role !== "none" &&
             bandSync.sessionId != null &&
-            !this.matchesLocal(session)
+            !this.matchesLocal(initialSession)
         ) {
             const shouldCatchUp =
                 bandSync.role === "leader" ||
-                (bandSync.role === "member" && bandSync.syncStatus === "inSync");
+                (bandSync.role === "member" && bandSync.followingLeaderUpdates);
             if (shouldCatchUp) {
-                void this.applySession(session).then(() => {
+                void this.applySession(initialSession).then(() => {
                     if (bandSync.role === "member") {
                         this.store.dispatch(BandSyncActionTypes.MEMBER_SYNCED);
                     }
@@ -67,8 +76,12 @@ export class BandSyncSongCoordinator {
             }
         }
 
-        this.onBandSyncState();
-        this.onLocalChange();
+        const bootSession = this.store.state.bandSync.session;
+        const leaderChanged =
+            bootSession != null &&
+            hasLeaderStateChangedComparedTo(bootSession, this.lastSeenRemoteSession);
+        this.onBandSyncState(leaderChanged);
+        this.onLocalChange(leaderChanged);
     }
 
     dispose(): void {
@@ -83,6 +96,10 @@ export class BandSyncSongCoordinator {
             return;
         }
 
+        this.store.dispatch(
+            BandSyncActionTypes.SET_FOLLOWING_LEADER_UPDATES,
+            true,
+        );
         await this.applySession(session);
         this.store.dispatch(BandSyncActionTypes.MEMBER_SYNCED);
     }
@@ -99,7 +116,7 @@ export class BandSyncSongCoordinator {
         return { songbookId, songNumber, transposition, collection, song };
     }
 
-    private onBandSyncState(): void {
+    private onBandSyncState(leaderChanged: boolean): void {
         const bandSync = this.store.state.bandSync;
         const isActive =
             bandSync.role !== "none" && bandSync.sessionId != null;
@@ -115,17 +132,14 @@ export class BandSyncSongCoordinator {
         }
 
         const session = bandSync.session;
-        const leaderChanged = hasLeaderStateChangedComparedTo(
-            session,
-            this.lastSeenRemoteSession,
-        );
-
         const shouldApply =
-            leaderChanged && bandSync.syncStatus === "inSync";
+            leaderChanged &&
+            bandSync.followingLeaderUpdates &&
+            !this.matchesLocal(session);
 
         this.lastSeenRemoteSession = session;
 
-        if (!shouldApply || this.matchesLocal(session)) {
+        if (!shouldApply) {
             return;
         }
 
@@ -134,7 +148,7 @@ export class BandSyncSongCoordinator {
         });
     }
 
-    private onLocalChange(): void {
+    private onLocalChange(leaderChanged: boolean): void {
         if (this.isApplying) return;
 
         const bandSync = this.store.state.bandSync;
@@ -172,9 +186,31 @@ export class BandSyncSongCoordinator {
                 songNumber,
                 transposition,
             );
+            const songMatches =
+                bandSync.session.songbookId === songbookId &&
+                bandSync.session.songNumber === songNumber;
+
+            if (
+                !songMatches &&
+                !leaderChanged &&
+                bandSync.followingLeaderUpdates
+            ) {
+                this.store.dispatch(
+                    BandSyncActionTypes.SET_FOLLOWING_LEADER_UPDATES,
+                    false,
+                );
+                return;
+            }
+
+            if (leaderChanged) {
+                return;
+            }
+
             this.store.dispatch(
                 BandSyncActionTypes.SET_MEMBER_SYNC_STATUS,
-                inSync ? "inSync" : "outOfSync",
+                inSync && bandSync.followingLeaderUpdates
+                    ? "inSync"
+                    : "outOfSync",
             );
         }
     }
@@ -246,7 +282,14 @@ export class BandSyncSongCoordinator {
             }
         } finally {
             this.isApplying = false;
-            this.onLocalChange();
+            const session = this.store.state.bandSync.session;
+            const leaderChanged =
+                session != null &&
+                hasLeaderStateChangedComparedTo(
+                    session,
+                    this.lastSeenRemoteSession,
+                );
+            this.onLocalChange(leaderChanged);
         }
     }
 }

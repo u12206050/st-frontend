@@ -3,6 +3,7 @@ import { BandSyncSession, BandSyncRole, BandSyncSyncStatus } from "@/services/ba
 export type State = {
     role: BandSyncRole;
     syncStatus: BandSyncSyncStatus;
+    followingLeaderUpdates: boolean;
     sessionId: string | null;
     code: string | null;
     songbookId: string | null;
@@ -14,6 +15,7 @@ export type State = {
 export const initialState = (): State => ({
     role: "none",
     syncStatus: "inSync",
+    followingLeaderUpdates: true,
     sessionId: null,
     code: null,
     songbookId: null,

@@ -53,6 +53,10 @@ export default defineComponent({
                 return "bg-primary";
             }
 
+            if (!this.store.state.bandSync.followingLeaderUpdates) {
+                return "bg-red-500";
+            }
+
             if (this.store.state.bandSync.syncStatus === "outOfSync") {
                 return "bg-red-500";
             }
@@ -64,6 +68,10 @@ export default defineComponent({
 
             if (this.store.state.bandSync.role === "leader") {
                 return this.$t("bandSync_leaderLabel") as string;
+            }
+
+            if (!this.store.state.bandSync.followingLeaderUpdates) {
+                return this.$t("bandSync_outOfSyncLabel") as string;
             }
 
             if (this.store.state.bandSync.syncStatus === "outOfSync") {

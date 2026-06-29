@@ -167,6 +167,9 @@ export default defineComponent({
             if (this.role === "leader") {
                 return this.$t("bandSync_leaderLabel") as string;
             }
+            if (!this.store.state.bandSync.followingLeaderUpdates) {
+                return this.$t("bandSync_outOfSyncLabel") as string;
+            }
             if (this.store.state.bandSync.syncStatus === "outOfSync") {
                 return this.$t("bandSync_outOfSyncLabel") as string;
             }
@@ -175,7 +178,7 @@ export default defineComponent({
         showResync() {
             return (
                 this.role === "member" &&
-                this.store.state.bandSync.syncStatus === "outOfSync"
+                !this.store.state.bandSync.followingLeaderUpdates
             );
         },
     },

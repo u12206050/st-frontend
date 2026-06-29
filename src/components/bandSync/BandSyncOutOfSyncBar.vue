@@ -26,7 +26,7 @@ export default defineComponent({
             return (
                 bandSync.role === "member" &&
                 bandSync.sessionId != null &&
-                bandSync.syncStatus === "outOfSync"
+                !bandSync.followingLeaderUpdates
             );
         },
     },

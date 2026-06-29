@@ -22,12 +22,14 @@ export type Mutations<S = State> = {
     [BandSyncMutationTypes.SET_PROCESSING](state: S, payload: boolean): void;
     [BandSyncMutationTypes.SET_ERROR](state: S, payload: string | null): void;
     [BandSyncMutationTypes.SET_SYNC_STATUS](state: S, payload: BandSyncSyncStatus): void;
+    [BandSyncMutationTypes.SET_FOLLOWING_LEADER_UPDATES](state: S, payload: boolean): void;
 };
 
 export const mutations: MutationTree<State> & Mutations = {
     [BandSyncMutationTypes.RESET](state) {
         state.role = "none";
         state.syncStatus = "inSync";
+        state.followingLeaderUpdates = true;
         state.sessionId = null;
         state.code = null;
         state.songbookId = null;
@@ -38,6 +40,7 @@ export const mutations: MutationTree<State> & Mutations = {
     [BandSyncMutationTypes.SET_ACTIVE](state, payload) {
         state.role = payload.role;
         state.syncStatus = "inSync";
+        state.followingLeaderUpdates = payload.role === "member";
         state.sessionId = payload.sessionId;
         state.code = payload.code;
         state.songbookId = payload.songbookId;
@@ -57,5 +60,8 @@ export const mutations: MutationTree<State> & Mutations = {
     },
     [BandSyncMutationTypes.SET_SYNC_STATUS](state, syncStatus) {
         state.syncStatus = syncStatus;
+    },
+    [BandSyncMutationTypes.SET_FOLLOWING_LEADER_UPDATES](state, followingLeaderUpdates) {
+        state.followingLeaderUpdates = followingLeaderUpdates;
     },
 };

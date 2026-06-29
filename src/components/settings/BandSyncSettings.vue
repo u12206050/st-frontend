@@ -61,6 +61,9 @@ export default defineComponent({
             if (this.store.state.bandSync.syncStatus === "outOfSync") {
                 return this.$t("bandSync_outOfSyncLabel") as string;
             }
+            if (!this.store.state.bandSync.followingLeaderUpdates) {
+                return this.$t("bandSync_outOfSyncLabel") as string;
+            }
             return this.$t("bandSync_followingLabel") as string;
         },
     },
