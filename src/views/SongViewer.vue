@@ -17,6 +17,12 @@
                             </template>
                             {{ $t('common_edit') }}
                         </BaseButton>
+                        <BandSyncIcon @open="showBandSync = true" />
+                        <BandSyncModal
+                            :show="showBandSync"
+                            :start-context="bandSyncStartContext"
+                            @close="showBandSync = false"
+                        />
                         <button @click="toggleFavorite" :disabled="favorites.loading" class="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10" title="Add to favorites">
                             <component :is="favorite ? 'HeartIcon' : 'HeartOutline'" :class="[favorite ? 'text-red-500 dark:text-red-400' : 'opacity-50', 'w-6 h-6']" />
                         </button>
@@ -227,6 +233,8 @@ import {
     SongSelector,
 } from "@/components/presentation";
 import { PlaylistAddToCard, CreatePlaylistModal } from "@/components/playlist";
+import BandSyncIcon from "@/components/bandSync/BandSyncIcon.vue";
+import BandSyncModal from "@/components/bandSync/BandSyncModal.vue";
 import { FolderAddIcon, LockClosedIcon, ShoppingCartIcon, ArrowLeftIcon, PencilAltIcon, HeartIcon, PlusIcon, XIcon } from "@heroicons/vue/solid";
 import { HeartIcon as HeartOutline } from "@heroicons/vue/outline";
 import { SwitchGroup, Switch, SwitchLabel } from "@headlessui/vue";
@@ -273,6 +281,8 @@ export default defineComponent({
         Switch,
         SwitchLabel,
         XIcon,
+        BandSyncIcon,
+        BandSyncModal,
     },
     data: () => ({
         store: useStore(),
@@ -293,6 +303,7 @@ export default defineComponent({
         showSheet: false,
         presentationPopupShown: false,
         showPresentationPopup: false,
+        showBandSync: false,
     }),
     computed: {
         selectedLanguage() {
@@ -375,6 +386,14 @@ export default defineComponent({
         viewCount() {
             return this.songViewCount ?? appSession.Views[this.song?.id ?? ""] ?? 0;
         },
+        bandSyncStartContext() {
+            if (!this.collection?.id || !this.song) return null;
+            return {
+                songbookId: this.collection.id,
+                songNumber: this.song.getNumber(this.collection.id) ?? 0,
+                transposition: this.store.state.songs.transposition ?? 0,
+            };
+        },
     },
     async beforeMount() {
         await this.load();
@@ -390,6 +409,14 @@ export default defineComponent({
     },
     unmounted() {
         removeEventListener("keydown", this.onKeyDown);
+    },
+    watch: {
+        "store.state.songs.transposition"(value: number | undefined, previous: number | undefined) {
+            if (value === previous || value === undefined || this.fullLoading) {
+                return;
+            }
+            void this.transpose();
+        },
     },
     methods: {
         setSong(songId: string) {

@@ -79,6 +79,7 @@ import { ICollection, IMediaFile } from "songtreasures-api";
 import { Collection, Contributor, SheetMusicTypes, Song, transposer, User } from "@/classes";
 import { useStore } from "@/store";
 import { SongsMutationTypes } from "@/store/modules/songs/mutation-types";
+import { SongsActionTypes } from "@/store/modules/songs/action-types";
 import OpenSheetMusicDisplay from "@/components/OSMD.vue";
 import http from "@/services/http";
 import { session, songs } from "@/services/api";
@@ -197,6 +198,15 @@ export default defineComponent({
                     this.setFile(file);
                 }
             }
+        }
+
+        if (this.collection && this.song) {
+            const routeKey = this.collection.key ?? this.collection.id;
+            await this.store.dispatch(SongsActionTypes.SELECT_COLLECTION, routeKey);
+            await this.store.dispatch(
+                SongsActionTypes.SELECT_SONG,
+                this.song.getNumber(this.collection.id),
+            );
         }
 
         this.loaded = true;

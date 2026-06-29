@@ -1,0 +1,61 @@
+import {
+    BandSyncRole,
+    BandSyncSession,
+    BandSyncSyncStatus,
+} from "@/services/bandSync/bandSyncSession";
+import { MutationTree } from "vuex";
+import { State } from ".";
+import { BandSyncMutationTypes } from "./mutation-types";
+
+export type ActivePayload = {
+    role: BandSyncRole;
+    sessionId: string;
+    code: string;
+    songbookId: string;
+    session?: BandSyncSession | null;
+};
+
+export type Mutations<S = State> = {
+    [BandSyncMutationTypes.RESET](state: S): void;
+    [BandSyncMutationTypes.SET_ACTIVE](state: S, payload: ActivePayload): void;
+    [BandSyncMutationTypes.SET_SESSION](state: S, payload: BandSyncSession | null): void;
+    [BandSyncMutationTypes.SET_PROCESSING](state: S, payload: boolean): void;
+    [BandSyncMutationTypes.SET_ERROR](state: S, payload: string | null): void;
+    [BandSyncMutationTypes.SET_SYNC_STATUS](state: S, payload: BandSyncSyncStatus): void;
+};
+
+export const mutations: MutationTree<State> & Mutations = {
+    [BandSyncMutationTypes.RESET](state) {
+        state.role = "none";
+        state.syncStatus = "inSync";
+        state.sessionId = null;
+        state.code = null;
+        state.songbookId = null;
+        state.session = null;
+        state.isProcessing = false;
+        state.errorMessage = null;
+    },
+    [BandSyncMutationTypes.SET_ACTIVE](state, payload) {
+        state.role = payload.role;
+        state.syncStatus = "inSync";
+        state.sessionId = payload.sessionId;
+        state.code = payload.code;
+        state.songbookId = payload.songbookId;
+        state.session = payload.session ?? null;
+        state.isProcessing = false;
+        state.errorMessage = null;
+    },
+    [BandSyncMutationTypes.SET_SESSION](state, session) {
+        state.session = session;
+    },
+    [BandSyncMutationTypes.SET_PROCESSING](state, isProcessing) {
+        state.isProcessing = isProcessing;
+    },
+    [BandSyncMutationTypes.SET_ERROR](state, errorMessage) {
+        state.errorMessage = errorMessage;
+        state.isProcessing = false;
+    },
+    [BandSyncMutationTypes.SET_SYNC_STATUS](state, syncStatus) {
+        state.syncStatus = syncStatus;
+    },
+};
