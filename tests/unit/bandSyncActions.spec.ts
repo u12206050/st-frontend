@@ -67,25 +67,32 @@ describe("bandSync actions", () => {
         expect(store.state.bandSync.errorMessage).to.equal(null);
     });
 
-    it("createSession surfaces timeout error message", async function () {
-        this.timeout(20_000);
-        sinon.stub(bandSyncService, "createSession").callsFake(
-            () =>
-                new Promise((resolve) => {
-                    setTimeout(() => resolve(mockSession), 20_000);
-                }),
-        );
+    it("createSession surfaces timeout error message", async () => {
+        const clock = sinon.useFakeTimers();
+        try {
+            sinon.stub(bandSyncService, "createSession").callsFake(
+                () =>
+                    new Promise((resolve) => {
+                        setTimeout(() => resolve(mockSession), 20_000);
+                    }),
+            );
 
-        const store = createBandSyncStore();
-        await store.dispatch(BandSyncActionTypes.CREATE_SESSION, {
-            songbookId: "book-1",
-            songNumber: 10,
-            transposition: 0,
-        });
+            const store = createBandSyncStore();
+            const dispatchPromise = store.dispatch(BandSyncActionTypes.CREATE_SESSION, {
+                songbookId: "book-1",
+                songNumber: 10,
+                transposition: 0,
+            });
 
-        expect(store.state.bandSync.errorMessage).to.equal(
-            "Connection timed out. Check your internet and try again.",
-        );
+            await clock.tickAsync(15_000);
+            await dispatchPromise;
+
+            expect(store.state.bandSync.errorMessage).to.equal(
+                "Connection timed out. Check your internet and try again.",
+            );
+        } finally {
+            clock.restore();
+        }
     });
 
     it("session snapshot null ends session", async () => {
