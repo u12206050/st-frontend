@@ -8,7 +8,7 @@ import { BandSyncException } from "@/services/bandSync/bandSyncSession";
 import { bandSyncService } from "@/services/bandSync/bandSyncService";
 
 const mockSession = {
-    sessionId: "session-1",
+    sessionId: "ABC123",
     code: "ABC123",
     leaderId: "leader-1",
     songbookId: "book-1",
@@ -51,7 +51,6 @@ describe("bandSync actions", () => {
         });
 
         expect(store.state.bandSync.role).to.equal("leader");
-        expect(store.state.bandSync.sessionId).to.equal("session-1");
         expect(store.state.bandSync.code).to.equal("ABC123");
         expect((bandSyncService.savePersistedSession as sinon.SinonStub).called).to.equal(true);
     });
@@ -99,7 +98,6 @@ describe("bandSync actions", () => {
         const store = createBandSyncStore();
         store.commit(BandSyncMutationTypes.SET_ACTIVE, {
             role: "member",
-            sessionId: "session-1",
             code: "ABC123",
             songbookId: "book-1",
             session: mockSession,
@@ -120,5 +118,58 @@ describe("bandSync actions", () => {
         await store.dispatch(BandSyncActionTypes.JOIN_SESSION, "BADCODE");
 
         expect(store.state.bandSync.errorMessage).to.equal("Session not found.");
+    });
+
+    it("renewSession is leader-only", async () => {
+        const store = createBandSyncStore();
+        store.commit(BandSyncMutationTypes.SET_ACTIVE, {
+            role: "member",
+            code: "ABC123",
+            songbookId: "book-1",
+            session: mockSession,
+        });
+
+        const renewStub = sinon.stub(bandSyncService, "renewSession");
+        await store.dispatch(BandSyncActionTypes.RENEW_SESSION);
+
+        expect(renewStub.called).to.equal(false);
+    });
+
+    it("renewSession updates session expireAt on success", async () => {
+        const newExpireAt = new Date(Date.now() + 864000000);
+        sinon.stub(bandSyncService, "renewSession").resolves(newExpireAt);
+        const store = createBandSyncStore();
+        store.commit(BandSyncMutationTypes.SET_ACTIVE, {
+            role: "leader",
+            code: "ABC123",
+            songbookId: "book-1",
+            session: mockSession,
+        });
+
+        await store.dispatch(BandSyncActionTypes.RENEW_SESSION);
+
+        expect(store.state.bandSync.session?.expireAt.getTime()).to.equal(
+            newExpireAt.getTime(),
+        );
+        expect(store.state.bandSync.isProcessing).to.equal(false);
+        expect(store.state.bandSync.errorMessage).to.equal(null);
+    });
+
+    it("renewSession surfaces BandSyncException message", async () => {
+        sinon.stub(bandSyncService, "renewSession").rejects(
+            new BandSyncException("Leader must be logged in."),
+        );
+        const store = createBandSyncStore();
+        store.commit(BandSyncMutationTypes.SET_ACTIVE, {
+            role: "leader",
+            code: "ABC123",
+            songbookId: "book-1",
+            session: mockSession,
+        });
+
+        await store.dispatch(BandSyncActionTypes.RENEW_SESSION);
+
+        expect(store.state.bandSync.errorMessage).to.equal("Leader must be logged in.");
+        expect(store.state.bandSync.isProcessing).to.equal(false);
     });
 });

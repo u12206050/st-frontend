@@ -4,7 +4,6 @@ export type State = {
     role: BandSyncRole;
     syncStatus: BandSyncSyncStatus;
     followingLeaderUpdates: boolean;
-    sessionId: string | null;
     code: string | null;
     songbookId: string | null;
     session: BandSyncSession | null;
@@ -16,7 +15,6 @@ export const initialState = (): State => ({
     role: "none",
     syncStatus: "inSync",
     followingLeaderUpdates: true,
-    sessionId: null,
     code: null,
     songbookId: null,
     session: null,

@@ -2,7 +2,7 @@ import { BandSyncSession } from "@/services/bandSync/bandSyncSession";
 
 export const bandSyncService = {
     watchSession: (
-        _sessionId: string,
+        _code: string,
         _onChange: (session: BandSyncSession | null) => void,
     ) => () => undefined,
     createSession: async (): Promise<BandSyncSession> => {
@@ -12,6 +12,7 @@ export const bandSyncService = {
         throw new Error("not implemented in test mock");
     },
     updateSession: async (): Promise<void> => undefined,
+    renewSession: async (): Promise<Date> => new Date(Date.now() + 864000000),
     endSession: async (): Promise<void> => undefined,
     savePersistedSession: (): void => undefined,
     readPersistedSession: () => null,

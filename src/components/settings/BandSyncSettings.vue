@@ -46,7 +46,7 @@ export default defineComponent({
     computed: {
         isActive() {
             return this.store.state.bandSync.role !== "none" &&
-                this.store.state.bandSync.sessionId != null;
+                this.store.state.bandSync.code != null;
         },
         code() {
             return this.isActive ? this.store.state.bandSync.code : null;

@@ -4,8 +4,9 @@ import {
     collection,
     onSnapshot,
     getDoc,
-    writeBatch,
+    setDoc,
     updateDoc,
+    deleteDoc,
     Timestamp,
     Unsubscribe,
 } from "firebase/firestore";
@@ -16,15 +17,14 @@ import {
     BandSyncSession,
     CODE_CHARS,
     CODE_LENGTH,
+    computeSessionExpireAt,
     fromFirestore,
     isExpired,
     roleFromStorage,
     roleToStorage,
-    SESSION_TTL_DAYS,
 } from "./bandSyncSession";
 
 const STORAGE_KEYS = {
-    sessionId: "bandSyncSessionId",
     code: "bandSyncCode",
     role: "bandSyncRole",
     songbookId: "bandSyncSongbookId",
@@ -34,13 +34,12 @@ class BandSyncService {
     private firestore = getFirestore(firebaseApp);
 
     private sessionsRef = collection(this.firestore, "bandSessions");
-    private codesRef = collection(this.firestore, "bandSessionCodes");
 
     watchSession(
-        sessionId: string,
+        code: string,
         onChange: (session: BandSyncSession | null) => void,
     ): Unsubscribe {
-        return onSnapshot(doc(this.sessionsRef, sessionId), (snapshot) => {
+        return onSnapshot(doc(this.sessionsRef, this.normalizeCode(code)), (snapshot) => {
             if (!snapshot.exists() || !snapshot.data()) {
                 onChange(null);
                 return;
@@ -74,12 +73,11 @@ class BandSyncService {
         }
 
         const now = new Date();
-        const expireAt = new Date(now.getTime() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
-        const sessionId = crypto.randomUUID();
+        const expireAt = computeSessionExpireAt(now);
         const code = await this.generateUniqueCode();
 
         const session: BandSyncSession = {
-            sessionId,
+            sessionId: code,
             code,
             leaderId: user.uid,
             songbookId,
@@ -90,9 +88,7 @@ class BandSyncService {
             expireAt,
         };
 
-        const batch = writeBatch(this.firestore);
-        batch.set(doc(this.sessionsRef, sessionId), {
-            code: session.code,
+        await setDoc(doc(this.sessionsRef, code), {
             leaderId: session.leaderId,
             songbookId: session.songbookId,
             songNumber: session.songNumber,
@@ -101,41 +97,17 @@ class BandSyncService {
             updatedAt: Timestamp.fromDate(session.updatedAt),
             expireAt: Timestamp.fromDate(session.expireAt),
         });
-        batch.set(doc(this.codesRef, code), {
-            sessionId,
-            expireAt: Timestamp.fromDate(expireAt),
-        });
-        await batch.commit();
 
         return session;
     }
 
     async joinSession(code: string): Promise<BandSyncSession> {
-        const normalizedCode = code.trim().toUpperCase();
+        const normalizedCode = this.normalizeCode(code);
         if (!normalizedCode) {
             throw new BandSyncException("Invalid session code.");
         }
 
-        const codeDoc = await getDoc(doc(this.codesRef, normalizedCode));
-        if (!codeDoc.exists() || !codeDoc.data()) {
-            throw new BandSyncException("Session not found.");
-        }
-
-        const codeData = codeDoc.data();
-        const expireAtField = codeData.expireAt;
-        if (!(expireAtField instanceof Timestamp)) {
-            throw new BandSyncException("Session not found.");
-        }
-        if (new Date() > expireAtField.toDate()) {
-            throw new BandSyncException("Session has expired.");
-        }
-
-        const sessionIdField = codeData.sessionId;
-        if (typeof sessionIdField !== "string" || !sessionIdField) {
-            throw new BandSyncException("Session not found.");
-        }
-
-        const sessionDoc = await getDoc(doc(this.sessionsRef, sessionIdField));
+        const sessionDoc = await getDoc(doc(this.sessionsRef, normalizedCode));
         if (!sessionDoc.exists() || !sessionDoc.data()) {
             throw new BandSyncException("Session not found.");
         }
@@ -149,12 +121,12 @@ class BandSyncService {
     }
 
     async updateSession({
-        sessionId,
+        code,
         songbookId,
         songNumber,
         transposition,
     }: {
-        sessionId: string;
+        code: string;
         songbookId: string;
         songNumber: number;
         transposition: number;
@@ -164,7 +136,7 @@ class BandSyncService {
             throw new BandSyncException("Leader must be logged in.");
         }
 
-        await updateDoc(doc(this.sessionsRef, sessionId), {
+        await updateDoc(doc(this.sessionsRef, this.normalizeCode(code)), {
             songbookId,
             songNumber,
             transposition,
@@ -172,33 +144,37 @@ class BandSyncService {
         });
     }
 
-    async endSession({
-        sessionId,
-        code,
-    }: {
-        sessionId: string;
-        code: string;
-    }): Promise<void> {
-        const batch = writeBatch(this.firestore);
-        batch.delete(doc(this.sessionsRef, sessionId));
-        batch.delete(doc(this.codesRef, code.toUpperCase()));
-        await batch.commit();
+    async renewSession({ code }: { code: string }): Promise<Date> {
+        const user = a.currentUser;
+        if (!user) {
+            throw new BandSyncException("Leader must be logged in.");
+        }
+
+        const expireAt = computeSessionExpireAt(new Date());
+
+        await updateDoc(doc(this.sessionsRef, this.normalizeCode(code)), {
+            expireAt: Timestamp.fromDate(expireAt),
+        });
+
+        return expireAt;
+    }
+
+    async endSession({ code }: { code: string }): Promise<void> {
+        await deleteDoc(doc(this.sessionsRef, this.normalizeCode(code)));
     }
 
     savePersistedSession(session: BandSyncPersistedSession): void {
-        localStorage.setItem(STORAGE_KEYS.sessionId, session.sessionId);
         localStorage.setItem(STORAGE_KEYS.code, session.code);
         localStorage.setItem(STORAGE_KEYS.role, roleToStorage(session.role));
         localStorage.setItem(STORAGE_KEYS.songbookId, session.songbookId);
     }
 
     readPersistedSession(): BandSyncPersistedSession | null {
-        const sessionId = localStorage.getItem(STORAGE_KEYS.sessionId);
         const code = localStorage.getItem(STORAGE_KEYS.code);
         const roleValue = localStorage.getItem(STORAGE_KEYS.role);
         const songbookId = localStorage.getItem(STORAGE_KEYS.songbookId);
 
-        if (!sessionId || !code || !roleValue || !songbookId) {
+        if (!code || !roleValue || !songbookId) {
             return null;
         }
 
@@ -207,14 +183,14 @@ class BandSyncService {
             return null;
         }
 
-        return { sessionId, code, role, songbookId };
+        return { code, role, songbookId };
     }
 
     clearPersistedSession(): void {
-        localStorage.removeItem(STORAGE_KEYS.sessionId);
         localStorage.removeItem(STORAGE_KEYS.code);
         localStorage.removeItem(STORAGE_KEYS.role);
         localStorage.removeItem(STORAGE_KEYS.songbookId);
+        localStorage.removeItem("bandSyncSessionId");
     }
 
     normalizeCode(code: string): string {
@@ -233,7 +209,7 @@ class BandSyncService {
     private async generateUniqueCode(): Promise<string> {
         for (let attempt = 0; attempt < 20; attempt++) {
             const code = this.generateCode();
-            const existing = await getDoc(doc(this.codesRef, code));
+            const existing = await getDoc(doc(this.sessionsRef, code));
             if (!existing.exists()) {
                 return code;
             }

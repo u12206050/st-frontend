@@ -25,7 +25,7 @@ export default defineComponent({
             const bandSync = this.store.state.bandSync;
             return (
                 bandSync.role === "member" &&
-                bandSync.sessionId != null &&
+                bandSync.code != null &&
                 !bandSync.followingLeaderUpdates
             );
         },

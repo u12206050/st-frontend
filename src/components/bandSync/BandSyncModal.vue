@@ -14,14 +14,35 @@
                     <p class="text-4xl font-bold tracking-widest font-mono mb-4">
                         {{ code }}
                     </p>
+                    <div v-if="sessionExpiry" class="text-sm opacity-70 mb-4">
+                        <p :class="{ 'text-amber-600 dark:text-amber-400': sessionExpiry.isUrgent }">
+                            {{ $t("bandSync_expires") }} {{ sessionExpiry.relative }}
+                        </p>
+                        <p class="text-xs opacity-60 mt-1">{{ sessionExpiry.absolute }}</p>
+                    </div>
                     <BaseButton
                         v-if="role === 'leader'"
                         theme="secondary"
                         class="w-full"
                         @click="copyCode"
                     >
-                        {{ $t("bandSync_codeLabel") }}
+                        {{ $t("bandSync_copyCode") }}
                     </BaseButton>
+                    <BaseButton
+                        v-if="role === 'leader'"
+                        theme="secondary"
+                        class="w-full mt-2"
+                        :disabled="isProcessing"
+                        @click="renewSession"
+                    >
+                        {{ $t("bandSync_renewSession") }}
+                    </BaseButton>
+                    <p
+                        v-if="role === 'leader'"
+                        class="text-xs opacity-60 mt-2"
+                    >
+                        {{ $t("bandSync_renewSessionHint", { days: sessionTtlDays }) }}
+                    </p>
                     <BaseButton
                         v-if="showResync"
                         theme="secondary"
@@ -70,7 +91,7 @@
 
                 <div class="flex items-center gap-3 my-2">
                     <div class="flex-1 h-px bg-black/10 dark:bg-white/20" />
-                    <span class="text-xs uppercase opacity-50">Or</span>
+                    <span class="text-xs uppercase opacity-50">{{ $t("common_or") }}</span>
                     <div class="flex-1 h-px bg-black/10 dark:bg-white/20" />
                 </div>
 
@@ -103,13 +124,14 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, PropType } from "vue";
 import { BaseModal } from "@/components";
 import { BaseInput } from "@/components/inputs";
 import auth from "@/services/auth";
+import { resyncBandSyncToLeader } from "@/services/bandSync/bandSyncCoordinatorRegistry";
+import { formatSessionExpiry, SESSION_TTL_DAYS } from "@/services/bandSync/bandSyncSession";
 import { useStore } from "@/store";
 import { BandSyncActionTypes } from "@/store/modules/bandSync/action-types";
-import { resyncBandSyncToLeader } from "@/services/bandSync/bandSyncCoordinatorRegistry";
+import { defineComponent, PropType } from "vue";
 
 export type BandSyncStartContext = {
     songbookId: string;
@@ -142,11 +164,13 @@ export default defineComponent({
         store: useStore(),
         codeInput: "",
         loginError: null as string | null,
+        expiryNow: new Date(),
+        expiryIntervalId: null as ReturnType<typeof setInterval> | null,
     }),
     computed: {
         isActive() {
             return this.store.state.bandSync.role !== "none" &&
-                this.store.state.bandSync.sessionId != null;
+                this.store.state.bandSync.code != null;
         },
         role() {
             return this.store.state.bandSync.role;
@@ -181,8 +205,49 @@ export default defineComponent({
                 !this.store.state.bandSync.followingLeaderUpdates
             );
         },
+        session() {
+            return this.store.state.bandSync.session;
+        },
+        languageKey() {
+            return this.store.getters.languageKey as string;
+        },
+        sessionExpiry() {
+            if (!this.session?.expireAt) {
+                return null;
+            }
+            return formatSessionExpiry(
+                this.session.expireAt,
+                this.languageKey,
+                this.expiryNow,
+            );
+        },
+        sessionTtlDays() {
+            return SESSION_TTL_DAYS;
+        },
+    },
+    watch: {
+        show(isOpen: boolean) {
+            if (isOpen && this.isActive) {
+                this.startExpiryTimer();
+            } else {
+                this.stopExpiryTimer();
+            }
+        },
+        isActive(isActive: boolean) {
+            if (isActive && this.show) {
+                this.startExpiryTimer();
+            } else {
+                this.stopExpiryTimer();
+            }
+        },
+    },
+    mounted() {
+        if (this.show && this.isActive) {
+            this.startExpiryTimer();
+        }
     },
     unmounted() {
+        this.stopExpiryTimer();
         this.store.dispatch(BandSyncActionTypes.CANCEL_START);
     },
     methods: {
@@ -221,6 +286,24 @@ export default defineComponent({
                 return;
             }
             await resyncBandSyncToLeader();
+        },
+        renewSession() {
+            this.store.dispatch(BandSyncActionTypes.RENEW_SESSION);
+        },
+        startExpiryTimer() {
+            this.expiryNow = new Date();
+            if (this.expiryIntervalId != null) {
+                return;
+            }
+            this.expiryIntervalId = setInterval(() => {
+                this.expiryNow = new Date();
+            }, 60_000);
+        },
+        stopExpiryTimer() {
+            if (this.expiryIntervalId != null) {
+                clearInterval(this.expiryIntervalId);
+                this.expiryIntervalId = null;
+            }
         },
         copyCode() {
             if (this.code) {

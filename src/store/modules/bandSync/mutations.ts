@@ -9,7 +9,6 @@ import { BandSyncMutationTypes } from "./mutation-types";
 
 export type ActivePayload = {
     role: BandSyncRole;
-    sessionId: string;
     code: string;
     songbookId: string;
     session?: BandSyncSession | null;
@@ -30,7 +29,6 @@ export const mutations: MutationTree<State> & Mutations = {
         state.role = "none";
         state.syncStatus = "inSync";
         state.followingLeaderUpdates = true;
-        state.sessionId = null;
         state.code = null;
         state.songbookId = null;
         state.session = null;
@@ -41,7 +39,6 @@ export const mutations: MutationTree<State> & Mutations = {
         state.role = payload.role;
         state.syncStatus = "inSync";
         state.followingLeaderUpdates = payload.role === "member";
-        state.sessionId = payload.sessionId;
         state.code = payload.code;
         state.songbookId = payload.songbookId;
         state.session = payload.session ?? null;

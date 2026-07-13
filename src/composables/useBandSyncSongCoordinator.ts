@@ -32,7 +32,7 @@ export class BandSyncSongCoordinator {
                 role: state.bandSync.role,
                 syncStatus: state.bandSync.syncStatus,
                 followingLeaderUpdates: state.bandSync.followingLeaderUpdates,
-                sessionId: state.bandSync.sessionId,
+                code: state.bandSync.code,
                 sessionTransposition: state.bandSync.session?.transposition,
                 sessionSongNumber: state.bandSync.session?.songNumber,
                 sessionSongbookId: state.bandSync.session?.songbookId,
@@ -61,7 +61,7 @@ export class BandSyncSongCoordinator {
         if (
             initialSession &&
             bandSync.role !== "none" &&
-            bandSync.sessionId != null &&
+            bandSync.code != null &&
             !this.matchesLocal(initialSession)
         ) {
             const shouldCatchUp =
@@ -119,7 +119,7 @@ export class BandSyncSongCoordinator {
     private onBandSyncState(leaderChanged: boolean): void {
         const bandSync = this.store.state.bandSync;
         const isActive =
-            bandSync.role !== "none" && bandSync.sessionId != null;
+            bandSync.role !== "none" && bandSync.code != null;
 
         if (!isActive || !bandSync.session) {
             this.lastSeenRemoteSession = null;
@@ -153,7 +153,7 @@ export class BandSyncSongCoordinator {
 
         const bandSync = this.store.state.bandSync;
         const isActive =
-            bandSync.role !== "none" && bandSync.sessionId != null;
+            bandSync.role !== "none" && bandSync.code != null;
 
         if (!isActive || !bandSync.session) return;
 

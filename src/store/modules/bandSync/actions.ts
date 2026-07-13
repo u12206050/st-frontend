@@ -34,11 +34,11 @@ type AugmentedActionContext = {
 } & Omit<ActionContext<State, RootState>, "commit" | "dispatch">;
 
 function listenToSession(
-    sessionId: string,
+    code: string,
     dispatch: AugmentedActionContext["dispatch"],
 ) {
     sessionUnsubscribe?.();
-    sessionUnsubscribe = bandSyncService.watchSession(sessionId, (session) => {
+    sessionUnsubscribe = bandSyncService.watchSession(code, (session) => {
         dispatch(BandSyncActionTypes.SESSION_SNAPSHOT, session);
     });
 }
@@ -60,6 +60,7 @@ export interface Actions {
     ): Promise<void>;
     [BandSyncActionTypes.CANCEL_START](context: AugmentedActionContext): void;
     [BandSyncActionTypes.LEAVE_SESSION](context: AugmentedActionContext): Promise<void>;
+    [BandSyncActionTypes.RENEW_SESSION](context: AugmentedActionContext): Promise<void>;
     [BandSyncActionTypes.LEADER_PUBLISH](
         context: AugmentedActionContext,
         payload: { songbookId: string; songNumber: number; transposition: number },
@@ -103,7 +104,6 @@ async function startSession(
         if (operationId !== startSessionGeneration) return;
 
         bandSyncService.savePersistedSession({
-            sessionId: session.sessionId,
             code: session.code,
             role,
             songbookId: session.songbookId,
@@ -113,13 +113,12 @@ async function startSession(
 
         context.commit(BandSyncMutationTypes.SET_ACTIVE, {
             role,
-            sessionId: session.sessionId,
             code: session.code,
             songbookId: session.songbookId,
             session,
         });
 
-        listenToSession(session.sessionId, context.dispatch);
+        listenToSession(session.code, context.dispatch);
     } catch (error) {
         if (operationId !== startSessionGeneration) return;
 
@@ -140,12 +139,11 @@ export const actions: ActionTree<State, RootState> & Actions = {
 
         commit(BandSyncMutationTypes.SET_ACTIVE, {
             role: persisted.role,
-            sessionId: persisted.sessionId,
             code: persisted.code,
             songbookId: persisted.songbookId,
         });
 
-        listenToSession(persisted.sessionId, dispatch);
+        listenToSession(persisted.code, dispatch);
     },
 
     async [BandSyncActionTypes.CREATE_SESSION](context, payload) {
@@ -173,10 +171,9 @@ export const actions: ActionTree<State, RootState> & Actions = {
     async [BandSyncActionTypes.LEAVE_SESSION]({ state, commit }) {
         stopListening();
 
-        if (state.role === "leader" && state.sessionId && state.code) {
+        if (state.role === "leader" && state.code) {
             try {
                 await bandSyncService.endSession({
-                    sessionId: state.sessionId,
                     code: state.code,
                 });
             } catch {
@@ -188,14 +185,46 @@ export const actions: ActionTree<State, RootState> & Actions = {
         commit(BandSyncMutationTypes.RESET);
     },
 
+    async [BandSyncActionTypes.RENEW_SESSION]({ state, commit }) {
+        if (
+            state.role !== "leader" ||
+            !state.code ||
+            !state.session
+        ) {
+            return;
+        }
+
+        commit(BandSyncMutationTypes.SET_PROCESSING, true);
+        commit(BandSyncMutationTypes.SET_ERROR, null);
+
+        try {
+            const expireAt = await bandSyncService.renewSession({
+                code: state.code,
+            });
+
+            commit(BandSyncMutationTypes.SET_SESSION, {
+                ...state.session,
+                expireAt,
+            });
+        } catch (error) {
+            if (error instanceof BandSyncException) {
+                commit(BandSyncMutationTypes.SET_ERROR, error.message);
+            } else {
+                commit(BandSyncMutationTypes.SET_ERROR, START_SESSION_GENERIC_ERROR);
+            }
+        } finally {
+            commit(BandSyncMutationTypes.SET_PROCESSING, false);
+        }
+    },
+
     async [BandSyncActionTypes.LEADER_PUBLISH]({ state, commit }, payload) {
-        if (state.role !== "leader" || !state.sessionId) {
+        if (state.role !== "leader" || !state.code) {
             return;
         }
 
         try {
             await bandSyncService.updateSession({
-                sessionId: state.sessionId,
+                code: state.code,
                 ...payload,
             });
 

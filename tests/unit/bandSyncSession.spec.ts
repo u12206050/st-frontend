@@ -3,18 +3,20 @@ import { Timestamp } from "firebase/firestore";
 import {
     CODE_CHARS,
     CODE_LENGTH,
+    computeSessionExpireAt,
+    formatSessionExpiry,
     fromFirestore,
     hasLeaderStateChangedComparedTo,
     isExpired,
     matchesSongState,
     roleFromStorage,
+    SESSION_TTL_DAYS,
 } from "@/services/bandSync/bandSyncSession";
 
 function makeSession(overrides: Record<string, unknown> = {}) {
     const now = new Date("2026-01-01T12:00:00Z");
     const expireAt = new Date("2026-01-11T12:00:00Z");
-    return fromFirestore("session-1", {
-        code: "ABC123",
+    return fromFirestore("ABC123", {
         leaderId: "leader-1",
         songbookId: "book-1",
         songNumber: 42,
@@ -29,16 +31,30 @@ function makeSession(overrides: Record<string, unknown> = {}) {
 describe("bandSyncSession", () => {
     it("fromFirestore parses session fields", () => {
         const session = makeSession();
-        expect(session.sessionId).to.equal("session-1");
+        expect(session.sessionId).to.equal("ABC123");
         expect(session.code).to.equal("ABC123");
         expect(session.songNumber).to.equal(42);
         expect(session.transposition).to.equal(2);
     });
 
+    it("fromFirestore derives code from doc ID, not data.code", () => {
+        const session = fromFirestore("XYZ789", {
+            code: "IGNORED",
+            leaderId: "leader-1",
+            songbookId: "book-1",
+            songNumber: 1,
+            transposition: 0,
+            createdAt: Timestamp.fromDate(new Date("2026-01-01T12:00:00Z")),
+            updatedAt: Timestamp.fromDate(new Date("2026-01-01T12:00:00Z")),
+            expireAt: Timestamp.fromDate(new Date("2026-01-11T12:00:00Z")),
+        });
+        expect(session.code).to.equal("XYZ789");
+        expect(session.sessionId).to.equal("XYZ789");
+    });
+
     it("fromFirestore falls back updatedAt to createdAt", () => {
         const createdAt = new Date("2026-01-01T12:00:00Z");
-        const session = fromFirestore("session-1", {
-            code: "ABC123",
+        const session = fromFirestore("ABC123", {
             leaderId: "leader-1",
             songbookId: "book-1",
             songNumber: 1,
@@ -63,6 +79,31 @@ describe("bandSyncSession", () => {
         const session = makeSession();
         expect(isExpired(session, new Date("2026-01-12T00:00:00Z"))).to.equal(true);
         expect(isExpired(session, new Date("2026-01-05T00:00:00Z"))).to.equal(false);
+    });
+
+    it("computeSessionExpireAt adds SESSION_TTL_DAYS", () => {
+        const from = new Date("2026-01-01T12:00:00Z");
+        const expireAt = computeSessionExpireAt(from);
+        const expected = new Date(from.getTime() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
+        expect(expireAt.getTime()).to.equal(expected.getTime());
+    });
+
+    it("formatSessionExpiry returns relative, absolute, and urgency", () => {
+        const now = new Date("2026-01-01T12:00:00Z");
+        const expireAt = new Date("2026-01-02T10:00:00Z");
+        const display = formatSessionExpiry(expireAt, "en", now);
+
+        expect(display.relative).to.be.a("string");
+        expect(display.absolute).to.be.a("string");
+        expect(display.isUrgent).to.equal(true);
+    });
+
+    it("formatSessionExpiry is not urgent when more than 24h remain", () => {
+        const now = new Date("2026-01-01T12:00:00Z");
+        const expireAt = new Date("2026-01-05T12:00:00Z");
+        const display = formatSessionExpiry(expireAt, "en", now);
+
+        expect(display.isUrgent).to.equal(false);
     });
 
     it("hasLeaderStateChangedComparedTo detects transposition change", () => {

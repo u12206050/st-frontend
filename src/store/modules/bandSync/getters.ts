@@ -8,6 +8,6 @@ export type Getters = {
 
 export const getters: GetterTree<State, RootState> & Getters = {
     isActive(state) {
-        return state.role !== "none" && state.sessionId != null;
+        return state.role !== "none" && state.code != null;
     },
 };
