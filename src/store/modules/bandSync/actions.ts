@@ -4,7 +4,10 @@ import {
     BandSyncRole,
     BandSyncSession,
     BandSyncSyncStatus,
+    ANOTHER_DEVICE_LEADING,
+    isLedByDevice,
 } from "@/services/bandSync/bandSyncSession";
+import { a } from "@/services/auth";
 import { ActionContext, ActionTree } from "vuex";
 import type { RootState } from "../..";
 import { BandSyncActionTypes } from "./action-types";
@@ -18,6 +21,8 @@ const START_SESSION_TIMEOUT_ERROR =
     "Connection timed out. Check your internet and try again.";
 const START_SESSION_GENERIC_ERROR =
     "Something went wrong. Please try again.";
+const SESSION_LISTENER_ERROR =
+    "Lost connection to the band session. Leave and rejoin to continue syncing.";
 
 let startSessionGeneration = 0;
 let sessionUnsubscribe: Unsubscribe | null = null;
@@ -36,11 +41,20 @@ type AugmentedActionContext = {
 function listenToSession(
     code: string,
     dispatch: AugmentedActionContext["dispatch"],
+    commit: AugmentedActionContext["commit"],
 ) {
     sessionUnsubscribe?.();
-    sessionUnsubscribe = bandSyncService.watchSession(code, (session) => {
-        dispatch(BandSyncActionTypes.SESSION_SNAPSHOT, session);
-    });
+    sessionUnsubscribe = bandSyncService.watchSession(
+        code,
+        (session) => {
+            dispatch(BandSyncActionTypes.SESSION_SNAPSHOT, session);
+        },
+        () => {
+            stopListening();
+            commit(BandSyncMutationTypes.SET_ERROR, SESSION_LISTENER_ERROR);
+            commit(BandSyncMutationTypes.SET_SYNC_STATUS, "outOfSync");
+        },
+    );
 }
 
 function stopListening() {
@@ -49,7 +63,7 @@ function stopListening() {
 }
 
 export interface Actions {
-    [BandSyncActionTypes.INIT](context: AugmentedActionContext): void;
+    [BandSyncActionTypes.INIT](context: AugmentedActionContext): Promise<void>;
     [BandSyncActionTypes.CREATE_SESSION](
         context: AugmentedActionContext,
         payload: { songbookId: string; songNumber: number; transposition: number },
@@ -61,6 +75,7 @@ export interface Actions {
     [BandSyncActionTypes.CANCEL_START](context: AugmentedActionContext): void;
     [BandSyncActionTypes.LEAVE_SESSION](context: AugmentedActionContext): Promise<void>;
     [BandSyncActionTypes.RENEW_SESSION](context: AugmentedActionContext): Promise<void>;
+    [BandSyncActionTypes.TAKE_LEAD](context: AugmentedActionContext): Promise<void>;
     [BandSyncActionTypes.LEADER_PUBLISH](
         context: AugmentedActionContext,
         payload: { songbookId: string; songNumber: number; transposition: number },
@@ -107,6 +122,7 @@ async function startSession(
             code: session.code,
             role,
             songbookId: session.songbookId,
+            followingLeaderUpdates: role === "member" ? true : undefined,
         });
 
         if (operationId !== startSessionGeneration) return;
@@ -116,9 +132,10 @@ async function startSession(
             code: session.code,
             songbookId: session.songbookId,
             session,
+            followingLeaderUpdates: role === "member" ? true : undefined,
         });
 
-        listenToSession(session.code, context.dispatch);
+        listenToSession(session.code, context.dispatch, context.commit);
     } catch (error) {
         if (operationId !== startSessionGeneration) return;
 
@@ -131,7 +148,7 @@ async function startSession(
 }
 
 export const actions: ActionTree<State, RootState> & Actions = {
-    [BandSyncActionTypes.INIT]({ commit, dispatch }) {
+    async [BandSyncActionTypes.INIT]({ commit, dispatch }) {
         const persisted = bandSyncService.readPersistedSession();
         if (!persisted || persisted.role === "none") {
             return;
@@ -141,9 +158,33 @@ export const actions: ActionTree<State, RootState> & Actions = {
             role: persisted.role,
             code: persisted.code,
             songbookId: persisted.songbookId,
+            followingLeaderUpdates: persisted.followingLeaderUpdates,
         });
 
-        listenToSession(persisted.code, dispatch);
+        listenToSession(persisted.code, dispatch, commit);
+
+        // Re-stamp this tab's device claim so a second window with a shared
+        // legacy localStorage identity cannot keep publishing as leader.
+        if (persisted.role === "leader") {
+            try {
+                const session = await bandSyncService.claimLead({
+                    code: persisted.code,
+                });
+                bandSyncService.savePersistedSession({
+                    code: persisted.code,
+                    role: "leader",
+                    songbookId: session.songbookId,
+                });
+                commit(BandSyncMutationTypes.SET_ACTIVE, {
+                    role: "leader",
+                    code: persisted.code,
+                    songbookId: session.songbookId,
+                    session,
+                });
+            } catch {
+                // Snapshot demotion / auth errors are handled elsewhere.
+            }
+        }
     },
 
     async [BandSyncActionTypes.CREATE_SESSION](context, payload) {
@@ -217,6 +258,50 @@ export const actions: ActionTree<State, RootState> & Actions = {
         }
     },
 
+    async [BandSyncActionTypes.TAKE_LEAD]({ state, commit }) {
+        if (
+            state.role !== "member" ||
+            !state.code ||
+            !state.songbookId ||
+            !state.session
+        ) {
+            return;
+        }
+
+        const uid = a.currentUser?.uid;
+        if (!uid || state.session.leaderId !== uid) {
+            return;
+        }
+
+        commit(BandSyncMutationTypes.SET_PROCESSING, true);
+        commit(BandSyncMutationTypes.SET_ERROR, null);
+
+        try {
+            const session = await bandSyncService.claimLead({ code: state.code });
+
+            bandSyncService.savePersistedSession({
+                code: state.code,
+                role: "leader",
+                songbookId: state.songbookId,
+            });
+
+            commit(BandSyncMutationTypes.SET_ACTIVE, {
+                role: "leader",
+                code: state.code,
+                songbookId: state.songbookId,
+                session,
+            });
+        } catch (error) {
+            if (error instanceof BandSyncException) {
+                commit(BandSyncMutationTypes.SET_ERROR, error.message);
+            } else {
+                commit(BandSyncMutationTypes.SET_ERROR, START_SESSION_GENERIC_ERROR);
+            }
+        } finally {
+            commit(BandSyncMutationTypes.SET_PROCESSING, false);
+        }
+    },
+
     async [BandSyncActionTypes.LEADER_PUBLISH]({ state, commit }, payload) {
         if (state.role !== "leader" || !state.code) {
             return;
@@ -239,7 +324,31 @@ export const actions: ActionTree<State, RootState> & Actions = {
             }
         } catch (error) {
             if (error instanceof BandSyncException) {
+                // Another device claimed leadership — demote locally.
+                if (
+                    error.message === ANOTHER_DEVICE_LEADING &&
+                    state.code &&
+                    state.songbookId &&
+                    state.session
+                ) {
+                    bandSyncService.savePersistedSession({
+                        code: state.code,
+                        role: "member",
+                        songbookId: state.songbookId,
+                        followingLeaderUpdates: true,
+                    });
+                    commit(BandSyncMutationTypes.SET_ACTIVE, {
+                        role: "member",
+                        code: state.code,
+                        songbookId: state.songbookId,
+                        session: state.session,
+                        followingLeaderUpdates: true,
+                    });
+                    return;
+                }
                 commit(BandSyncMutationTypes.SET_ERROR, error.message);
+            } else {
+                commit(BandSyncMutationTypes.SET_ERROR, START_SESSION_GENERIC_ERROR);
             }
         }
     },
@@ -265,16 +374,47 @@ export const actions: ActionTree<State, RootState> & Actions = {
 
         commit(BandSyncMutationTypes.SET_FOLLOWING_LEADER_UPDATES, enabled);
 
+        if (state.code && state.songbookId) {
+            bandSyncService.savePersistedSession({
+                code: state.code,
+                role: "member",
+                songbookId: state.songbookId,
+                followingLeaderUpdates: enabled,
+            });
+        }
+
         if (!enabled) {
             commit(BandSyncMutationTypes.SET_SYNC_STATUS, "outOfSync");
         }
     },
 
-    [BandSyncActionTypes.SESSION_SNAPSHOT]({ dispatch, commit }, session) {
+    [BandSyncActionTypes.SESSION_SNAPSHOT]({ state, dispatch, commit }, session) {
         if (!session) {
             dispatch(BandSyncActionTypes.SESSION_ENDED);
             return;
         }
+
+        // Another device claimed leadership — demote this install to member.
+        if (state.role === "leader" && state.code) {
+            const deviceId = bandSyncService.getDeviceId();
+            if (!isLedByDevice(session, deviceId)) {
+                bandSyncService.savePersistedSession({
+                    code: state.code,
+                    role: "member",
+                    songbookId: session.songbookId,
+                    followingLeaderUpdates: true,
+                });
+                commit(BandSyncMutationTypes.SET_ACTIVE, {
+                    role: "member",
+                    code: state.code,
+                    songbookId: session.songbookId,
+                    session,
+                    followingLeaderUpdates: true,
+                });
+                return;
+            }
+        }
+
         commit(BandSyncMutationTypes.SET_SESSION, session);
     },
 

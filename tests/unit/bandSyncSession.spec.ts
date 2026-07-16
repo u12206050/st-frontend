@@ -8,8 +8,10 @@ import {
     fromFirestore,
     hasLeaderStateChangedComparedTo,
     isExpired,
+    isLedByDevice,
     matchesSongState,
     roleFromStorage,
+    samePitchClass,
     SESSION_TTL_DAYS,
 } from "@/services/bandSync/bandSyncSession";
 
@@ -35,6 +37,25 @@ describe("bandSyncSession", () => {
         expect(session.code).to.equal("ABC123");
         expect(session.songNumber).to.equal(42);
         expect(session.transposition).to.equal(2);
+        expect(session.leaderDeviceId).to.equal(null);
+    });
+
+    it("fromFirestore parses leaderDeviceId", () => {
+        const session = makeSession({ leaderDeviceId: "device-abc" });
+        expect(session.leaderDeviceId).to.equal("device-abc");
+    });
+
+    it("isLedByDevice matches claim and treats legacy null as any device", () => {
+        expect(isLedByDevice(makeSession(), "device-a")).to.equal(true);
+        expect(isLedByDevice(makeSession({ leaderDeviceId: "" }), "device-a")).to.equal(
+            true,
+        );
+        expect(
+            isLedByDevice(makeSession({ leaderDeviceId: "device-a" }), "device-a"),
+        ).to.equal(true);
+        expect(
+            isLedByDevice(makeSession({ leaderDeviceId: "device-a" }), "device-b"),
+        ).to.equal(false);
     });
 
     it("fromFirestore derives code from doc ID, not data.code", () => {
@@ -65,9 +86,21 @@ describe("bandSyncSession", () => {
         expect(session.updatedAt.getTime()).to.equal(createdAt.getTime());
     });
 
+    it("samePitchClass treats signed and 0–11 encodings as equal", () => {
+        expect(samePitchClass(-2, 10)).to.equal(true);
+        expect(samePitchClass(10, -2)).to.equal(true);
+        expect(samePitchClass(0, 12)).to.equal(true);
+        expect(samePitchClass(-2, 0)).to.equal(false);
+    });
+
     it("matchesSongState returns true when state matches", () => {
         const session = makeSession();
         expect(matchesSongState(session, "book-1", 42, 2)).to.equal(true);
+    });
+
+    it("matchesSongState equates pitch-class equivalent transpositions", () => {
+        const session = makeSession({ transposition: 10 });
+        expect(matchesSongState(session, "book-1", 42, -2)).to.equal(true);
     });
 
     it("matchesSongState returns false when song number differs", () => {
@@ -114,6 +147,15 @@ describe("bandSyncSession", () => {
         });
         expect(hasLeaderStateChangedComparedTo(session, session)).to.equal(false);
         expect(hasLeaderStateChangedComparedTo(changed, session)).to.equal(true);
+    });
+
+    it("hasLeaderStateChangedComparedTo ignores pitch-class equivalent transposition", () => {
+        const session = makeSession({ transposition: -2 });
+        const equivalent = makeSession({
+            transposition: 10,
+            updatedAt: Timestamp.fromDate(session.updatedAt),
+        });
+        expect(hasLeaderStateChangedComparedTo(equivalent, session)).to.equal(false);
     });
 
     it("roleFromStorage maps persisted roles", () => {

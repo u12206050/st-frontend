@@ -19,6 +19,7 @@
     "bandSync_openFromSong": "Open a song to start a band sync session.",
     "bandSync_outOfSyncLabel": "Out of sync with leader",
     "bandSync_resync": "Re-sync",
+    "bandSync_takeLead": "Take the lead",
     "bandSync_renewSession": "Renew session",
     "bandSync_renewSessionHint": "Extends the session by {days} days",
     "bandSync_sessionEnded": "Session ended.",

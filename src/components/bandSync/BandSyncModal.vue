@@ -1,10 +1,10 @@
 <template>
     <BaseModal :show="show" @close="close">
         <template #title>
-            <h3 class="font-bold text-xl">{{ $t("bandSync_title") }}</h3>
+            <h3 class="font-bold text-xl px-4">{{ $t("bandSync_title") }}</h3>
         </template>
 
-        <div class="flex flex-col gap-4 w-full max-w-md">
+        <div class="flex flex-col gap-4 w-full max-w-md px-4">
             <template v-if="isActive">
                 <div class="rounded-xl bg-black/5 dark:bg-white/10 p-5 text-center">
                     <p class="font-semibold text-base mb-4">{{ statusLabel }}</p>
@@ -43,6 +43,15 @@
                     >
                         {{ $t("bandSync_renewSessionHint", { days: sessionTtlDays }) }}
                     </p>
+                    <BaseButton
+                        v-if="canTakeLead"
+                        theme="secondary"
+                        class="w-full mt-2"
+                        :disabled="isProcessing"
+                        @click="takeLead"
+                    >
+                        {{ $t("bandSync_takeLead") }}
+                    </BaseButton>
                     <BaseButton
                         v-if="showResync"
                         theme="secondary"
@@ -199,6 +208,13 @@ export default defineComponent({
             }
             return this.$t("bandSync_followingLabel") as string;
         },
+        canTakeLead(): boolean {
+            return (
+                this.role === "member" &&
+                this.session != null &&
+                auth.user?.uid === this.session.leaderId
+            );
+        },
         showResync() {
             return (
                 this.role === "member" &&
@@ -286,6 +302,9 @@ export default defineComponent({
                 return;
             }
             await resyncBandSyncToLeader();
+        },
+        async takeLead() {
+            await this.store.dispatch(BandSyncActionTypes.TAKE_LEAD);
         },
         renewSession() {
             this.store.dispatch(BandSyncActionTypes.RENEW_SESSION);

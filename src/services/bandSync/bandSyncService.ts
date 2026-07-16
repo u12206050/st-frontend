@@ -17,9 +17,11 @@ import {
     BandSyncSession,
     CODE_CHARS,
     CODE_LENGTH,
+    ANOTHER_DEVICE_LEADING,
     computeSessionExpireAt,
     fromFirestore,
     isExpired,
+    isLedByDevice,
     roleFromStorage,
     roleToStorage,
 } from "./bandSyncSession";
@@ -28,6 +30,8 @@ const STORAGE_KEYS = {
     code: "bandSyncCode",
     role: "bandSyncRole",
     songbookId: "bandSyncSongbookId",
+    followingLeaderUpdates: "bandSyncFollowingLeaderUpdates",
+    deviceId: "bandSyncDeviceId",
 } as const;
 
 class BandSyncService {
@@ -35,27 +39,48 @@ class BandSyncService {
 
     private sessionsRef = collection(this.firestore, "bandSessions");
 
+    /**
+     * Per-tab id (sessionStorage). localStorage is shared across tabs of the
+     * same origin, so it cannot distinguish two windows of the same browser.
+     */
+    getDeviceId(): string {
+        const existing = sessionStorage.getItem(STORAGE_KEYS.deviceId);
+        if (existing) {
+            return existing;
+        }
+        const deviceId = crypto.randomUUID();
+        sessionStorage.setItem(STORAGE_KEYS.deviceId, deviceId);
+        return deviceId;
+    }
+
     watchSession(
         code: string,
         onChange: (session: BandSyncSession | null) => void,
+        onError?: (error: Error) => void,
     ): Unsubscribe {
-        return onSnapshot(doc(this.sessionsRef, this.normalizeCode(code)), (snapshot) => {
-            if (!snapshot.exists() || !snapshot.data()) {
-                onChange(null);
-                return;
-            }
-
-            try {
-                const session = fromFirestore(snapshot.id, snapshot.data());
-                if (isExpired(session)) {
+        return onSnapshot(
+            doc(this.sessionsRef, this.normalizeCode(code)),
+            (snapshot) => {
+                if (!snapshot.exists() || !snapshot.data()) {
                     onChange(null);
                     return;
                 }
-                onChange(session);
-            } catch {
-                onChange(null);
-            }
-        });
+
+                try {
+                    const session = fromFirestore(snapshot.id, snapshot.data());
+                    if (isExpired(session)) {
+                        onChange(null);
+                        return;
+                    }
+                    onChange(session);
+                } catch {
+                    onChange(null);
+                }
+            },
+            (error) => {
+                onError?.(error);
+            },
+        );
     }
 
     async createSession({
@@ -75,11 +100,13 @@ class BandSyncService {
         const now = new Date();
         const expireAt = computeSessionExpireAt(now);
         const code = await this.generateUniqueCode();
+        const deviceId = this.getDeviceId();
 
         const session: BandSyncSession = {
             sessionId: code,
             code,
             leaderId: user.uid,
+            leaderDeviceId: deviceId,
             songbookId,
             songNumber,
             transposition,
@@ -90,6 +117,7 @@ class BandSyncService {
 
         await setDoc(doc(this.sessionsRef, code), {
             leaderId: session.leaderId,
+            leaderDeviceId: deviceId,
             songbookId: session.songbookId,
             songNumber: session.songNumber,
             transposition: session.transposition,
@@ -120,6 +148,18 @@ class BandSyncService {
         return session;
     }
 
+    private async readActiveSession(code: string): Promise<BandSyncSession> {
+        const sessionDoc = await getDoc(doc(this.sessionsRef, this.normalizeCode(code)));
+        if (!sessionDoc.exists() || !sessionDoc.data()) {
+            throw new BandSyncException("Session not found.");
+        }
+        const session = fromFirestore(sessionDoc.id, sessionDoc.data());
+        if (isExpired(session)) {
+            throw new BandSyncException("Session has expired.");
+        }
+        return session;
+    }
+
     async updateSession({
         code,
         songbookId,
@@ -136,11 +176,24 @@ class BandSyncService {
             throw new BandSyncException("Leader must be logged in.");
         }
 
+        const session = await this.readActiveSession(code);
+        if (session.leaderId !== user.uid) {
+            throw new BandSyncException("Only the session leader can publish.");
+        }
+        if (!isLedByDevice(session, this.getDeviceId())) {
+            throw new BandSyncException(ANOTHER_DEVICE_LEADING);
+        }
+
+        const deviceId = this.getDeviceId();
+        const stampClaim =
+            session.leaderDeviceId == null || session.leaderDeviceId === "";
+
         await updateDoc(doc(this.sessionsRef, this.normalizeCode(code)), {
             songbookId,
             songNumber,
             transposition,
             updatedAt: Timestamp.now(),
+            ...(stampClaim ? { leaderDeviceId: deviceId } : {}),
         });
     }
 
@@ -148,6 +201,14 @@ class BandSyncService {
         const user = a.currentUser;
         if (!user) {
             throw new BandSyncException("Leader must be logged in.");
+        }
+
+        const session = await this.readActiveSession(code);
+        if (session.leaderId !== user.uid) {
+            throw new BandSyncException("Only the session leader can renew.");
+        }
+        if (!isLedByDevice(session, this.getDeviceId())) {
+            throw new BandSyncException(ANOTHER_DEVICE_LEADING);
         }
 
         const expireAt = computeSessionExpireAt(new Date());
@@ -159,23 +220,91 @@ class BandSyncService {
         return expireAt;
     }
 
+    async claimLead({ code }: { code: string }): Promise<BandSyncSession> {
+        const user = a.currentUser;
+        if (!user) {
+            throw new BandSyncException("Leader must be logged in.");
+        }
+
+        const session = await this.readActiveSession(code);
+        if (session.leaderId !== user.uid) {
+            throw new BandSyncException("Only the session leader can take the lead.");
+        }
+
+        const deviceId = this.getDeviceId();
+        const now = new Date();
+        await updateDoc(doc(this.sessionsRef, this.normalizeCode(code)), {
+            leaderDeviceId: deviceId,
+            updatedAt: Timestamp.fromDate(now),
+        });
+
+        return {
+            ...session,
+            leaderDeviceId: deviceId,
+            updatedAt: now,
+        };
+    }
+
     async endSession({ code }: { code: string }): Promise<void> {
+        const user = a.currentUser;
+        if (!user) {
+            throw new BandSyncException("Leader must be logged in.");
+        }
+
+        const session = await this.readActiveSession(code);
+        if (session.leaderId !== user.uid) {
+            throw new BandSyncException("Only the session leader can end the session.");
+        }
+        if (!isLedByDevice(session, this.getDeviceId())) {
+            throw new BandSyncException(ANOTHER_DEVICE_LEADING);
+        }
+
         await deleteDoc(doc(this.sessionsRef, this.normalizeCode(code)));
     }
 
+    /**
+     * Session membership (code / songbook) is shared in localStorage.
+     * Role is per-tab in sessionStorage so one tab demoting cannot rewrite
+     * another tab's leader status.
+     */
     savePersistedSession(session: BandSyncPersistedSession): void {
         localStorage.setItem(STORAGE_KEYS.code, session.code);
-        localStorage.setItem(STORAGE_KEYS.role, roleToStorage(session.role));
         localStorage.setItem(STORAGE_KEYS.songbookId, session.songbookId);
+        // Stop sharing role across tabs (legacy localStorage).
+        localStorage.removeItem(STORAGE_KEYS.role);
+        localStorage.removeItem(STORAGE_KEYS.followingLeaderUpdates);
+
+        sessionStorage.setItem(STORAGE_KEYS.role, roleToStorage(session.role));
+        if (session.role === "member") {
+            sessionStorage.setItem(
+                STORAGE_KEYS.followingLeaderUpdates,
+                session.followingLeaderUpdates === false ? "false" : "true",
+            );
+        } else {
+            sessionStorage.removeItem(STORAGE_KEYS.followingLeaderUpdates);
+        }
     }
 
     readPersistedSession(): BandSyncPersistedSession | null {
         const code = localStorage.getItem(STORAGE_KEYS.code);
-        const roleValue = localStorage.getItem(STORAGE_KEYS.role);
         const songbookId = localStorage.getItem(STORAGE_KEYS.songbookId);
 
-        if (!code || !roleValue || !songbookId) {
+        if (!code || !songbookId) {
             return null;
+        }
+
+        const roleValue =
+            sessionStorage.getItem(STORAGE_KEYS.role) ??
+            localStorage.getItem(STORAGE_KEYS.role);
+
+        // Another tab already joined this session: default to member.
+        if (!roleValue) {
+            return {
+                code,
+                role: "member",
+                songbookId,
+                followingLeaderUpdates: true,
+            };
         }
 
         const role = roleFromStorage(roleValue);
@@ -183,14 +312,33 @@ class BandSyncService {
             return null;
         }
 
-        return { code, role, songbookId };
+        // Migrate legacy shared role into this tab's sessionStorage.
+        if (!sessionStorage.getItem(STORAGE_KEYS.role)) {
+            sessionStorage.setItem(STORAGE_KEYS.role, roleToStorage(role));
+            localStorage.removeItem(STORAGE_KEYS.role);
+        }
+
+        const followingRaw =
+            sessionStorage.getItem(STORAGE_KEYS.followingLeaderUpdates) ??
+            localStorage.getItem(STORAGE_KEYS.followingLeaderUpdates);
+        const followingLeaderUpdates =
+            role === "member"
+                ? followingRaw !== "false"
+                : undefined;
+
+        return { code, role, songbookId, followingLeaderUpdates };
     }
 
     clearPersistedSession(): void {
         localStorage.removeItem(STORAGE_KEYS.code);
         localStorage.removeItem(STORAGE_KEYS.role);
         localStorage.removeItem(STORAGE_KEYS.songbookId);
+        localStorage.removeItem(STORAGE_KEYS.followingLeaderUpdates);
+        localStorage.removeItem(STORAGE_KEYS.deviceId);
         localStorage.removeItem("bandSyncSessionId");
+        sessionStorage.removeItem(STORAGE_KEYS.role);
+        sessionStorage.removeItem(STORAGE_KEYS.followingLeaderUpdates);
+        // Keep sessionStorage deviceId for this tab's identity.
     }
 
     normalizeCode(code: string): string {

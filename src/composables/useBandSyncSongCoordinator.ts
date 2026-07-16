@@ -3,6 +3,7 @@ import {
     BandSyncSession,
     hasLeaderStateChangedComparedTo,
     matchesSongState,
+    samePitchClass,
 } from "@/services/bandSync/bandSyncSession";
 import { appSession } from "@/services/session";
 import { RootState, Store } from "@/store";
@@ -10,14 +11,21 @@ import { BandSyncActionTypes } from "@/store/modules/bandSync/action-types";
 import { SongsActionTypes } from "@/store/modules/songs/action-types";
 import { SongsMutationTypes } from "@/store/modules/songs/mutation-types";
 import { Router } from "vue-router";
+import type { Store as VuexStore } from "vuex";
 
 export type BandSyncSongCoordinatorOptions = {
     onAfterApply?: () => Promise<void>;
 };
 
+function songKey(songbookId: string, songNumber: number): string {
+    return `${songbookId}:${songNumber}`;
+}
+
 export class BandSyncSongCoordinator {
     private isApplying = false;
     private lastSeenRemoteSession: BandSyncSession | null = null;
+    /** Last local song identity we observed; used to detect member-initiated navigation. */
+    private lastLocalSongKey: string | null = null;
     private unwatch: (() => void) | null = null;
 
     constructor(
@@ -27,8 +35,14 @@ export class BandSyncSongCoordinator {
     ) {}
 
     start(): void {
-        this.unwatch = this.store.watch(
-            (state: RootState) => ({
+        const initial = this.getLocalState();
+        this.lastLocalSongKey = songKey(initial.songbookId, initial.songNumber);
+
+        // Store is an intersection of module-typed stores; watch() otherwise
+        // narrows state to Pick<RootState, "bandSync"> and rejects songs fields.
+        const rootStore = this.store as unknown as VuexStore<RootState>;
+        this.unwatch = rootStore.watch(
+            (state) => ({
                 role: state.bandSync.role,
                 syncStatus: state.bandSync.syncStatus,
                 followingLeaderUpdates: state.bandSync.followingLeaderUpdates,
@@ -68,9 +82,17 @@ export class BandSyncSongCoordinator {
                 bandSync.role === "leader" ||
                 (bandSync.role === "member" && bandSync.followingLeaderUpdates);
             if (shouldCatchUp) {
-                void this.applySession(initialSession).then(() => {
-                    if (bandSync.role === "member") {
+                void this.applySession(initialSession).then((applied) => {
+                    if (bandSync.role !== "member") {
+                        return;
+                    }
+                    if (applied) {
                         this.store.dispatch(BandSyncActionTypes.MEMBER_SYNCED);
+                    } else {
+                        this.store.dispatch(
+                            BandSyncActionTypes.SET_MEMBER_SYNC_STATUS,
+                            "outOfSync",
+                        );
                     }
                 });
             }
@@ -88,6 +110,7 @@ export class BandSyncSongCoordinator {
         this.unwatch?.();
         this.unwatch = null;
         this.lastSeenRemoteSession = null;
+        this.lastLocalSongKey = null;
     }
 
     async resyncToLeader(): Promise<void> {
@@ -100,8 +123,15 @@ export class BandSyncSongCoordinator {
             BandSyncActionTypes.SET_FOLLOWING_LEADER_UPDATES,
             true,
         );
-        await this.applySession(session);
-        this.store.dispatch(BandSyncActionTypes.MEMBER_SYNCED);
+        const applied = await this.applySession(session);
+        if (applied) {
+            this.store.dispatch(BandSyncActionTypes.MEMBER_SYNCED);
+        } else {
+            this.store.dispatch(
+                BandSyncActionTypes.SET_MEMBER_SYNC_STATUS,
+                "outOfSync",
+            );
+        }
     }
 
     private getLocalState() {
@@ -114,6 +144,11 @@ export class BandSyncSongCoordinator {
             song && collection ? song.getNumber(collection.id) ?? 0 : 0;
         const transposition = this.store.state.songs.transposition ?? 0;
         return { songbookId, songNumber, transposition, collection, song };
+    }
+
+    private rememberLocalSong(): void {
+        const { songbookId, songNumber } = this.getLocalState();
+        this.lastLocalSongKey = songKey(songbookId, songNumber);
     }
 
     private onBandSyncState(leaderChanged: boolean): void {
@@ -132,6 +167,7 @@ export class BandSyncSongCoordinator {
         }
 
         const session = bandSync.session;
+
         const shouldApply =
             leaderChanged &&
             bandSync.followingLeaderUpdates &&
@@ -143,8 +179,15 @@ export class BandSyncSongCoordinator {
             return;
         }
 
-        void this.applySession(session).then(() => {
-            this.store.dispatch(BandSyncActionTypes.MEMBER_SYNCED);
+        void this.applySession(session).then((applied) => {
+            if (applied) {
+                this.store.dispatch(BandSyncActionTypes.MEMBER_SYNCED);
+            } else {
+                this.store.dispatch(
+                    BandSyncActionTypes.SET_MEMBER_SYNC_STATUS,
+                    "outOfSync",
+                );
+            }
         });
     }
 
@@ -157,9 +200,18 @@ export class BandSyncSongCoordinator {
 
         if (!isActive || !bandSync.session) return;
 
-        const { songbookId, songNumber, transposition } = this.getLocalState();
+        const { songbookId, songNumber, transposition, song } = this.getLocalState();
+        const localKey = songKey(songbookId, songNumber);
+        const localSongChanged =
+            this.lastLocalSongKey != null && this.lastLocalSongKey !== localKey;
+        this.lastLocalSongKey = localKey;
 
         if (bandSync.role === "leader") {
+            // Only publish when viewing a real song in a collection.
+            if (!song || !songbookId || songNumber <= 0) {
+                return;
+            }
+
             if (
                 matchesSongState(
                     bandSync.session,
@@ -186,14 +238,15 @@ export class BandSyncSongCoordinator {
                 songNumber,
                 transposition,
             );
-            const songMatches =
-                bandSync.session.songbookId === songbookId &&
-                bandSync.session.songNumber === songNumber;
 
+            // Unfollow only when the *member* navigated away from the session
+            // song. Do not treat "leader moved, we haven't applied yet" as browse-away
+            // (that used to clear following after lastSeen was updated).
             if (
-                !songMatches &&
+                localSongChanged &&
                 !leaderChanged &&
-                bandSync.followingLeaderUpdates
+                bandSync.followingLeaderUpdates &&
+                !inSync
             ) {
                 this.store.dispatch(
                     BandSyncActionTypes.SET_FOLLOWING_LEADER_UPDATES,
@@ -220,43 +273,98 @@ export class BandSyncSongCoordinator {
         return matchesSongState(session, songbookId, songNumber, transposition);
     }
 
-    private async applySession(session: BandSyncSession): Promise<void> {
-        if (this.isApplying) {
+    private refreshMemberSyncStatus(): void {
+        const bandSync = this.store.state.bandSync;
+        if (bandSync.role !== "member" || !bandSync.session) {
             return;
+        }
+        const inSync = this.matchesLocal(bandSync.session);
+        this.store.dispatch(
+            BandSyncActionTypes.SET_MEMBER_SYNC_STATUS,
+            inSync && bandSync.followingLeaderUpdates ? "inSync" : "outOfSync",
+        );
+    }
+
+    /**
+     * Applies remote session to local song state.
+     * @returns false when the song cannot be resolved (fail closed).
+     */
+    private async applySession(session: BandSyncSession): Promise<boolean> {
+        if (this.isApplying) {
+            return false;
         }
         this.isApplying = true;
 
         try {
             const { songbookId, songNumber, transposition } = this.getLocalState();
-
-            if (
+            const songChanged =
                 session.songbookId !== songbookId ||
-                session.songNumber !== songNumber
-            ) {
+                session.songNumber !== songNumber;
+            const transpositionChanged = !samePitchClass(
+                session.transposition,
+                transposition,
+            );
+
+            if (!songChanged && !transpositionChanged) {
+                return true;
+            }
+
+            if (songChanged) {
+                if (session.songNumber <= 0) {
+                    return false;
+                }
+
                 const col = appSession.collections.find(
                     (c) => c.id === session.songbookId,
                 );
-                if (col) {
-                    const routeKey = col.key ?? col.id;
-                    await this.router.push({
-                        name: "song",
-                        params: {
-                            collection: routeKey,
-                            number: session.songNumber,
-                        },
-                    });
-                    await this.store.dispatch(
-                        SongsActionTypes.SELECT_COLLECTION,
-                        routeKey,
-                    );
-                    await this.store.dispatch(
-                        SongsActionTypes.SELECT_SONG,
-                        session.songNumber,
-                    );
+                if (!col) {
+                    return false;
+                }
+
+                const language =
+                    (this.store.getters.languageKey as string | undefined) ??
+                    this.store.state.songs.language ??
+                    "en";
+                await col.load(language);
+
+                const targetSong = col.songs.find(
+                    (s) => s.getNumber(col.id) == session.songNumber,
+                );
+                if (!targetSong) {
+                    return false;
+                }
+
+                const routeKey = String(col.key ?? col.id);
+
+                await this.router.push({
+                    name: "song",
+                    params: {
+                        collection: routeKey,
+                        number: String(session.songNumber),
+                    },
+                });
+
+                // Drive store from the session ids (not only route keys) so we
+                // cannot land on the wrong book when keys are ambiguous.
+                await this.store.dispatch(
+                    SongsActionTypes.SELECT_COLLECTION,
+                    session.songbookId,
+                );
+                await this.store.dispatch(
+                    SongsActionTypes.SELECT_SONG,
+                    session.songNumber,
+                );
+
+                const after = this.getLocalState();
+                if (
+                    after.songbookId !== session.songbookId ||
+                    after.songNumber != session.songNumber
+                ) {
+                    return false;
                 }
             }
 
-            if (session.transposition !== transposition) {
+            if (transpositionChanged) {
                 this.store.commit(
                     SongsMutationTypes.SET_TRANSPOSITION,
                     session.transposition,
@@ -280,16 +388,12 @@ export class BandSyncSongCoordinator {
             if (this.options.onAfterApply) {
                 await this.options.onAfterApply();
             }
+
+            return true;
         } finally {
             this.isApplying = false;
-            const session = this.store.state.bandSync.session;
-            const leaderChanged =
-                session != null &&
-                hasLeaderStateChangedComparedTo(
-                    session,
-                    this.lastSeenRemoteSession,
-                );
-            this.onLocalChange(leaderChanged);
+            this.rememberLocalSong();
+            this.refreshMemberSyncStatus();
         }
     }
 }

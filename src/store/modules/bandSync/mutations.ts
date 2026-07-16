@@ -12,6 +12,8 @@ export type ActivePayload = {
     code: string;
     songbookId: string;
     session?: BandSyncSession | null;
+    /** When set for members, restores persisted follow preference. */
+    followingLeaderUpdates?: boolean;
 };
 
 export type Mutations<S = State> = {
@@ -37,8 +39,15 @@ export const mutations: MutationTree<State> & Mutations = {
     },
     [BandSyncMutationTypes.SET_ACTIVE](state, payload) {
         state.role = payload.role;
-        state.syncStatus = "inSync";
-        state.followingLeaderUpdates = payload.role === "member";
+        const followingLeaderUpdates =
+            payload.role === "member"
+                ? payload.followingLeaderUpdates !== false
+                : true;
+        state.followingLeaderUpdates = followingLeaderUpdates;
+        state.syncStatus =
+            payload.role === "member" && !followingLeaderUpdates
+                ? "outOfSync"
+                : "inSync";
         state.code = payload.code;
         state.songbookId = payload.songbookId;
         state.session = payload.session ?? null;

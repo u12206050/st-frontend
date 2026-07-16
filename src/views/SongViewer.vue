@@ -299,6 +299,7 @@ export default defineComponent({
             [key: string]: boolean;
         },
         fullLoading: false,
+        loadGeneration: 0,
         favorite: false,
         showSheet: false,
         presentationPopupShown: false,
@@ -403,14 +404,19 @@ export default defineComponent({
         addEventListener("keydown", this.onKeyDown);
         this.favorite = this.favorites.has(this.song?.id);
     },
-    async updated() {
-        await this.load();
-        this.favorite = this.favorites.has(this.song?.id);
-    },
     unmounted() {
         removeEventListener("keydown", this.onKeyDown);
     },
     watch: {
+        "$route.params.collection"() {
+            void this.load();
+        },
+        "$route.params.number"() {
+            void this.load();
+        },
+        "store.state.songs.songId"(id: string | undefined) {
+            this.favorite = this.favorites.has(id);
+        },
         "store.state.songs.transposition"(value: number | undefined, previous: number | undefined) {
             if (value === previous || value === undefined || this.fullLoading) {
                 return;
@@ -428,6 +434,9 @@ export default defineComponent({
             });
         },
         setLyrics() {
+            if (!this.song) {
+                return;
+            }
             this.control.setSong(this.song);
             this.control.setContributors(appSession.contributors.filter(i => this.song?.participants.some(p => p.contributorId === i.id)).map(i => i.item));
             if (this.lyrics && !this.lyrics.ContainsChords)
@@ -488,69 +497,104 @@ export default defineComponent({
         },
         async load() {
             await this.doLoad();
-            application.setTitle(this.collection.key + " " + this.song.getNumber(this.collection?.id) + " - " + this.song.getName());
-        },
-        async doLoad() {
-            if (this.fullLoading) {
+            if (!this.song || !this.collection) {
                 return;
             }
+            application.setTitle(
+                this.collection.key +
+                    " " +
+                    this.song.getNumber(this.collection.id) +
+                    " - " +
+                    this.song.getName(),
+            );
+        },
+        async doLoad() {
+            const loadId = ++this.loadGeneration;
             this.fullLoading = true;
-            this.store.commit(SongsMutationTypes.SET_SHEETMUSIC_OPTIONS, {
-                fileId: "",
-                show: false,
-                clef: "treble",
-                originalKey: "C",
-            });
-            this.store.commit(SongsMutationTypes.SET_SHEETMUSIC_OPTIONS, undefined);
-            this.number = this.$route.params.number as string;
-            if (
-                !this.store.getters.collection
-                    ?.getKeys()
-                    .includes(this.$route.params.collection as string)
-            ) {
-                await this.store.dispatch(
-                    SongsActionTypes.SELECT_COLLECTION,
-                    this.$route.params.collection as string,
-                );
-            }
+            try {
+                this.store.commit(SongsMutationTypes.SET_SHEETMUSIC_OPTIONS, {
+                    fileId: "",
+                    show: false,
+                    clef: "treble",
+                    originalKey: "C",
+                });
+                this.store.commit(SongsMutationTypes.SET_SHEETMUSIC_OPTIONS, undefined);
 
-            while (this.collection?.loading) {
-                await new Promise((resolve) => setTimeout(resolve, 100));
-            }
+                const routeCollection = this.$route.params.collection as string;
+                const routeNumber = this.$route.params.number as string;
+                this.number = routeNumber;
 
-            await this.store.dispatch(SongsActionTypes.SELECT_SONG, this.number);
+                const current = this.store.getters.collection as Collection | undefined;
+                const routeMatchesCurrent =
+                    current != null &&
+                    (current.id === routeCollection ||
+                        current.getKeys().includes(routeCollection));
 
-            if (this.song?.hasLyrics && this.collection)
-            {
-                if (this.lyrics?.ContainsChords) {
-                    this.lyrics = await this.song?.transposeLyrics( 
-                        this.store.state.songs.transposition ?? 0,
-                        this.selectedLanguage,
+                if (!routeMatchesCurrent) {
+                    await this.store.dispatch(
+                        SongsActionTypes.SELECT_COLLECTION,
+                        routeCollection,
                     );
                 }
-                else {
-                    this.lyrics = await this.song?.getLyrics(this.store.state.songs.language);
-                }  
-            }
 
-            const route = this.$route.fullPath;
-            const log = () => {
-                if (route == this.$route.fullPath && this.song) {
-                    analytics.viewSong(this.song.id).then(r => {
-                        this.songViewCount = r;
-                        if (this.song)
-                            appSession.Views[this.song.id] = r;
-                    });
-                    this.store.dispatch(
-                        SessionActionTypes.LOG_SONG_ITEM,
-                        this.song,
-                    );
+                if (loadId !== this.loadGeneration) {
+                    return;
                 }
-            };
-            setTimeout(log, 5000);
-            this.setLyrics();
-            this.setView(this.store.state.songs.view);
-            this.fullLoading = false;
+
+                while (this.collection?.loading) {
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                    if (loadId !== this.loadGeneration) {
+                        return;
+                    }
+                }
+
+                // Re-read route in case a newer navigation started while we waited.
+                const number = this.$route.params.number as string;
+                this.number = number;
+                await this.store.dispatch(SongsActionTypes.SELECT_SONG, number);
+
+                if (loadId !== this.loadGeneration) {
+                    return;
+                }
+
+                if (this.song?.hasLyrics && this.collection) {
+                    if (this.lyrics?.ContainsChords) {
+                        this.lyrics = await this.song?.transposeLyrics(
+                            this.store.state.songs.transposition ?? 0,
+                            this.selectedLanguage,
+                        );
+                    } else {
+                        this.lyrics = await this.song?.getLyrics(
+                            this.store.state.songs.language,
+                        );
+                    }
+                }
+
+                if (loadId !== this.loadGeneration) {
+                    return;
+                }
+
+                const route = this.$route.fullPath;
+                const log = () => {
+                    if (route == this.$route.fullPath && this.song) {
+                        analytics.viewSong(this.song.id).then((r) => {
+                            this.songViewCount = r;
+                            if (this.song) appSession.Views[this.song.id] = r;
+                        });
+                        this.store.dispatch(
+                            SessionActionTypes.LOG_SONG_ITEM,
+                            this.song,
+                        );
+                    }
+                };
+                setTimeout(log, 5000);
+                this.setLyrics();
+                this.setView(this.store.state.songs.view);
+            } finally {
+                if (loadId === this.loadGeneration) {
+                    this.fullLoading = false;
+                }
+            }
         },
         async addToPlaylist(playlist: ICustomCollection) {
             // Add song to playlist with ID

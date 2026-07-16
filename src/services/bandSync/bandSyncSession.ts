@@ -11,6 +11,8 @@ export type BandSyncSession = {
     sessionId: string;
     code: string;
     leaderId: string;
+    /** Per-install id of the device currently publishing as leader. Null on legacy sessions. */
+    leaderDeviceId?: string | null;
     songbookId: string;
     songNumber: number;
     transposition: number;
@@ -23,6 +25,8 @@ export type BandSyncPersistedSession = {
     code: string;
     role: BandSyncRole;
     songbookId: string;
+    /** Members only; defaults to true when absent (legacy storage). */
+    followingLeaderUpdates?: boolean;
 };
 
 export class BandSyncException extends Error {
@@ -31,6 +35,9 @@ export class BandSyncException extends Error {
         this.name = "BandSyncException";
     }
 }
+
+export const ANOTHER_DEVICE_LEADING =
+    "Another device is leading this session.";
 
 function readTimestamp(value: unknown): Date | null {
     if (value instanceof Timestamp) {
@@ -46,10 +53,17 @@ export function fromFirestore(
     const createdAt = readTimestamp(data.createdAt) ?? new Date();
     const updatedAt = readTimestamp(data.updatedAt) ?? createdAt;
 
+    const leaderDeviceIdRaw = data.leaderDeviceId;
+    const leaderDeviceId =
+        typeof leaderDeviceIdRaw === "string" && leaderDeviceIdRaw.length > 0
+            ? leaderDeviceIdRaw
+            : null;
+
     return {
         sessionId: code,
         code,
         leaderId: data.leaderId as string,
+        leaderDeviceId,
         songbookId: data.songbookId as string,
         songNumber: (data.songNumber as number).valueOf(),
         transposition: (data.transposition as number).valueOf(),
@@ -57,6 +71,18 @@ export function fromFirestore(
         updatedAt,
         expireAt: readTimestamp(data.expireAt) ?? createdAt,
     };
+}
+
+/** Legacy sessions without a device claim match any device. */
+export function isLedByDevice(
+    session: BandSyncSession,
+    deviceId: string,
+): boolean {
+    const remote = session.leaderDeviceId;
+    if (remote == null || remote === "") {
+        return true;
+    }
+    return remote === deviceId;
 }
 
 export function isExpired(session: BandSyncSession, now = new Date()): boolean {
@@ -123,6 +149,11 @@ export function formatSessionExpiry(
     return { relative, absolute, isUrgent };
 }
 
+/** Pitch-class equality for session transposition ints (signed vs 0–11). */
+export function samePitchClass(a: number, b: number): boolean {
+    return ((a % 12) + 12) % 12 === ((b % 12) + 12) % 12;
+}
+
 export function matchesSongState(
     session: BandSyncSession,
     songbookId: string,
@@ -132,7 +163,7 @@ export function matchesSongState(
     return (
         session.songbookId === songbookId &&
         session.songNumber === songNumber &&
-        session.transposition === transposition
+        samePitchClass(session.transposition, transposition)
     );
 }
 
@@ -144,7 +175,7 @@ export function hasLeaderStateChangedComparedTo(
     return (
         session.songbookId !== other.songbookId ||
         session.songNumber !== other.songNumber ||
-        session.transposition !== other.transposition ||
+        !samePitchClass(session.transposition, other.transposition) ||
         session.updatedAt.getTime() !== other.updatedAt.getTime()
     );
 }

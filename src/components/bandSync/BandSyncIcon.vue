@@ -26,10 +26,10 @@
 </template>
 
 <script lang="ts">
-import { defineComponent } from "vue";
-import { UserGroupIcon } from "@heroicons/vue/outline";
 import { Tooltip } from "@/components";
 import { useStore } from "@/store";
+import { UserGroupIcon } from "@heroicons/vue/outline";
+import { defineComponent } from "vue";
 
 export default defineComponent({
     name: "band-sync-icon",
