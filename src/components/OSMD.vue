@@ -162,17 +162,17 @@
 
 <script lang="ts">
 import { Collection, Song, transposer } from "@/classes";
+import { SongChanger } from "@/components/songs";
+import { sheetService } from "@/services/songs/sheetService";
+import { sessionTranspositionFromApi } from "@/services/bandSync/bandSyncSession";
 import { useStore } from "@/store";
 import { SongsMutationTypes } from "@/store/modules/songs/mutation-types";
-import { appSession } from "@/services/session";
-import { SongChanger } from "@/components/songs";
 import { XIcon } from "@heroicons/vue/solid";
-import { SheetMusicOptions } from "songtreasures";
-import { sheetService } from "@/services/songs/sheetService";
 import { Sheet } from "hiddentreasures-js";
+import { SheetMusicOptions } from "songtreasures";
 import { defineComponent, PropType } from "vue";
-import ListSelect from "./inputs/ListSelect.vue";
 import BaseDropdown from "./inputs/BaseDropdown.vue";
+import ListSelect from "./inputs/ListSelect.vue";
 
 export default defineComponent({
     name: "open-sheet-music-display",
@@ -230,39 +230,13 @@ export default defineComponent({
     },
     async mounted() {
         if (this.options.show) {
-            this.transposition =
-                this.store.state.songs.transposition ??
-                this.options.transposition ??
-                0;
+            this.transposition = this.options.transposition ?? 0;
             this.setSvg();
             this.sheetDetails = await sheetService.get(this.options.fileId);
             await this.load();
         }
     },
-    watch: {
-        "store.state.songs.transposition"(value: number | undefined) {
-            if (value === undefined || value === this.transposition) {
-                return;
-            }
-            void this.applyTransposition(value);
-        },
-    },
     methods: {
-        toApiTransposition(relative: number): number {
-            const userKeyTransposition = transposer.getRelativeTransposition(
-                appSession.user?.settings?.defaultTransposition ?? "C",
-                true,
-            );
-            return (relative + userKeyTransposition) % 12;
-        },
-        async applyTransposition(relative: number) {
-            this.transposition = relative;
-            this.store.commit(SongsMutationTypes.SET_SHEETMUSIC_OPTIONS, {
-                ...this.options,
-                transposition: this.toApiTransposition(relative),
-            });
-            await this.load();
-        },
         close() {
             if (this.options) {
                 // eslint-disable-next-line vue/no-mutating-props
@@ -290,7 +264,7 @@ export default defineComponent({
                 const octave = 12 * this.octave;
                 const transposition =
                     this.transposition !== undefined
-                        ? this.toApiTransposition(this.transposition) + octave
+                        ? this.transposition + octave
                         : undefined;
                 this.svg = (await sheetService.render({
                     id: this.options.fileId,
@@ -324,8 +298,24 @@ export default defineComponent({
         async transpose(n: number) {
             this.loading["transpose"] = true;
             this.transposition = n;
-            this.store.commit(SongsMutationTypes.SET_TRANSPOSITION, n);
-            await this.applyTransposition(n);
+
+            // Flutter: sheet key only pushes into session transposition while
+            // band sync is active; otherwise SVG-only.
+            if (this.store.state.bandSync.role !== "none") {
+                const sessionTs = sessionTranspositionFromApi(
+                    n,
+                    this.relativeKey || "C",
+                    this.song?.transpositions ?? {},
+                );
+                this.store.commit(
+                    SongsMutationTypes.SET_TRANSPOSITION,
+                    sessionTs,
+                );
+            }
+
+            if (this.transposition == n) {
+                await this.load();
+            }
             this.loading["transpose"] = false;
         },
         async setClef(c: "bass" | "treble" | "alto") {

@@ -1,9 +1,10 @@
-import { Collection, transposer } from "@/classes";
+import { Collection } from "@/classes";
 import {
     BandSyncSession,
     hasLeaderStateChangedComparedTo,
     matchesSongState,
     samePitchClass,
+    toSheetApiTransposition,
 } from "@/services/bandSync/bandSyncSession";
 import { appSession } from "@/services/session";
 import { RootState, Store } from "@/store";
@@ -371,17 +372,18 @@ export class BandSyncSongCoordinator {
                 );
             }
 
+            // SheetMusic.vue (and any store-bound sheet) uses API-domain options.
+            // SongViewer keeps a local copy; its watcher updates that separately.
             const sheetMusic = this.store.state.songs.sheetMusic;
             if (sheetMusic) {
-                const userKeyTransposition = transposer.getRelativeTransposition(
-                    appSession.user?.settings?.defaultTransposition ?? "C",
-                    true,
-                );
-                const apiTransposition =
-                    (session.transposition + userKeyTransposition) % 12;
+                const userDefaultKey =
+                    appSession.user?.settings?.defaultTransposition ?? "C";
                 this.store.commit(SongsMutationTypes.SET_SHEETMUSIC_OPTIONS, {
                     ...sheetMusic,
-                    transposition: apiTransposition,
+                    transposition: toSheetApiTransposition(
+                        session.transposition,
+                        userDefaultKey,
+                    ),
                 });
             }
 

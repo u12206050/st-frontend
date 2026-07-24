@@ -12,7 +12,9 @@ import {
     matchesSongState,
     roleFromStorage,
     samePitchClass,
+    sessionTranspositionFromApi,
     SESSION_TTL_DAYS,
+    toSheetApiTransposition,
 } from "@/services/bandSync/bandSyncSession";
 
 function makeSession(overrides: Record<string, unknown> = {}) {
@@ -91,6 +93,26 @@ describe("bandSyncSession", () => {
         expect(samePitchClass(10, -2)).to.equal(true);
         expect(samePitchClass(0, 12)).to.equal(true);
         expect(samePitchClass(-2, 0)).to.equal(false);
+    });
+
+    it("toSheetApiTransposition matches Flutter SheetsCubit formula", () => {
+        // session -2 (Bb concert for song in C): C → -2, Bb → 0, Eb → 7
+        expect(toSheetApiTransposition(-2, "C")).to.equal(-2);
+        expect(toSheetApiTransposition(-2, "Bb")).to.equal(0);
+        expect(toSheetApiTransposition(-2, "Eb")).to.equal(7);
+        // at-rest session 0: sheet opens at instrument default (smTs)
+        expect(toSheetApiTransposition(0, "Bb")).to.equal(2);
+        expect(toSheetApiTransposition(0, "C")).to.equal(0);
+    });
+
+    it("sessionTranspositionFromApi prefers song map entry then falls back", () => {
+        const songTranspositions = { C: 0, Bb: -2, G: 5 };
+        // Bb instrument, API 0 ↔ session -2 via map
+        expect(sessionTranspositionFromApi(0, "Bb", songTranspositions)).to.equal(-2);
+        // C instrument, API -2 ↔ session -2
+        expect(sessionTranspositionFromApi(-2, "C", songTranspositions)).to.equal(-2);
+        // No matching map entry → api - userKey
+        expect(sessionTranspositionFromApi(3, "Bb", {})).to.equal(1);
     });
 
     it("matchesSongState returns true when state matches", () => {

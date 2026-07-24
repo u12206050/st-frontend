@@ -101,9 +101,11 @@
                         />
                         <OpenSheetMusicDisplay
                             v-if="sheetMusicOptions?.show === true && sheetMusicOptions?.type === 'sheetmusic'"
+                            :key="`${sheetMusicOptions.fileId}:${sheetMusicOptions.transposition}`"
                             :options="sheetMusicOptions"
                             :relativeKey="user?.settings?.defaultTransposition"
                             :languageKey="languageKey"
+                            :song="song"
                             @close="() => sheetMusicOptions ? sheetMusicOptions.show = false : undefined"
                         />
                         <div
@@ -248,6 +250,7 @@ import { SongsActionTypes } from "@/store/modules/songs/action-types";
 import { notify } from "@/services/notify";
 import { analytics } from "@/services/api";
 import { appSession } from "@/services/session";
+import { toSheetApiTransposition } from "@/services/bandSync/bandSyncSession";
 import { AudioTrack, SongViewType } from "@/store/modules/songs/state";
 import { SheetMusicOptions } from "songtreasures";
 import { presentation } from "@/classes/presentation";
@@ -422,6 +425,23 @@ export default defineComponent({
                 return;
             }
             void this.transpose();
+
+            // Followers: refresh open sheet with local instrument API transposition
+            // (Flutter SheetsCubit.syncSessionTransposition). Solo / leader lyrics
+            // changes leave sheet independent.
+            const bandSync = this.store.state.bandSync;
+            if (
+                this.sheetMusicOptions?.show &&
+                bandSync.role === "member" &&
+                bandSync.followingLeaderUpdates
+            ) {
+                const defaultKey =
+                    this.user?.settings?.defaultTransposition ?? "C";
+                this.sheetMusicOptions = {
+                    ...this.sheetMusicOptions,
+                    transposition: toSheetApiTransposition(value, defaultKey),
+                };
+            }
         },
     },
     methods: {

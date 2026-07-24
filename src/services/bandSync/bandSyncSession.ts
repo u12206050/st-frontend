@@ -1,4 +1,5 @@
 import { Timestamp } from "firebase/firestore";
+import { transposer } from "@/classes";
 
 export const SESSION_TTL_DAYS = 10;
 export const CODE_LENGTH = 6;
@@ -152,6 +153,46 @@ export function formatSessionExpiry(
 /** Pitch-class equality for session transposition ints (signed vs 0–11). */
 export function samePitchClass(a: number, b: number): boolean {
     return ((a % 12) + 12) % 12 === ((b % 12) + 12) % 12;
+}
+
+/**
+ * Session (lyrics/concert) → sheet API transposition for a local instrument key.
+ * Matches Flutter SheetsCubit: (session + moveByValueDict[userKey]) % 12.
+ */
+export function toSheetApiTransposition(
+    sessionTransposition: number,
+    userDefaultKey: string,
+): number {
+    const userKeyTransposition = transposer.getRelativeTransposition(
+        userDefaultKey || "C",
+        true,
+    );
+    return (sessionTransposition + userKeyTransposition) % 12;
+}
+
+/**
+ * Sheet API → session (lyrics) transposition.
+ * Prefers a signed map entry from song.transpositions when pitch class matches;
+ * otherwise api - userKey offset. Matches Flutter sessionTranspositionFromApi.
+ */
+export function sessionTranspositionFromApi(
+    apiTransposition: number,
+    userDefaultKey: string,
+    songTranspositions: { [key: string]: number } = {},
+): number {
+    const userKeyTransposition = transposer.getRelativeTransposition(
+        userDefaultKey || "C",
+        true,
+    );
+
+    for (const entry of Object.values(songTranspositions)) {
+        const apiForEntry = (entry + userKeyTransposition) % 12;
+        if (samePitchClass(apiForEntry, apiTransposition)) {
+            return entry;
+        }
+    }
+
+    return apiTransposition - userKeyTransposition;
 }
 
 export function matchesSongState(

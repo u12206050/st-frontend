@@ -51,6 +51,7 @@
                     url &&
                     ['sheet-music', 'sheet-music-embed'].includes(routeName)
                 "
+                :key="`${options.fileId}:${options.transposition}`"
                 :options="options"
                 :relativeKey="user?.settings.defaultTransposition ?? 'C'"
                 :showInfo="false"
