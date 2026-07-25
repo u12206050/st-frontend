@@ -235,7 +235,6 @@ export default defineComponent({
   name: "the-navbar",
   components: {
     FullSearchInput,
-    StoreCart,
     Disclosure,
     DisclosureButton,
     DisclosurePanel,
@@ -274,12 +273,8 @@ export default defineComponent({
           path: "/",
         },
         {
-          name: this.$t("common_collections"),
-          path: "/collections",
-        },
-        {
           name: `${this.$t("common_your")} ${this.$t(
-            "common_collections"
+            "common_collections",
           ).toLocaleLowerCase()}`,
           path: "/custom-collections",
         },
