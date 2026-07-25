@@ -326,8 +326,11 @@ export default defineComponent({
         },
         copyCode() {
             if (this.code) {
-                navigator.clipboard.writeText(this.code);
+                void navigator.clipboard
+                    .writeText(this.code)
+                    .catch(() => undefined);
             }
+        }
         },
     },
 });
