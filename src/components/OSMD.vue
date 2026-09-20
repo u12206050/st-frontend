@@ -197,7 +197,7 @@
       "
       :position="'local'"
     />
-    <div id="osmd-svg"></div>
+    <div id="osmd-svg" class="sheet-themed"></div>
   </BaseCard>
 </template>
 

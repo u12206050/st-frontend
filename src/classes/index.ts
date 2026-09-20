@@ -8,11 +8,13 @@ import MediaFile from "./mediaFile";
 import Instrument from "./instrument";
 import Participant from "./participant";
 import Product from "./product";
+import sheetTheme from "./sheetTheme";
 import Song from "./song";
 import Tag from "./tag";
 import User from "./user";
 import UserSettings from "./userSettings";
 
+export * from "./sheetTheme";
 export * from "./transposer";
 export * from "./base64";
 export * from "./items";
@@ -41,6 +43,7 @@ export {
     Participant,
     Product,
     Tag,
+    sheetTheme,
     Song,
     User,
     UserSettings,

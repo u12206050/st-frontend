@@ -30,6 +30,14 @@
                     </button>
                     <button
                         class="text-left px-4 py-3 flex gap-2 items-center rounded-md"
+                        :class="{ 'bg-black/10 dark:bg-white/10': category == 'sheetMusic' }"
+                        @click="category = 'sheetMusic'"
+                    >
+                        <MusicNoteIcon class="w-5 h-5 opacity-50" />
+                        {{ $t('settings_sheetMusic') }}
+                    </button>
+                    <button
+                        class="text-left px-4 py-3 flex gap-2 items-center rounded-md"
                         :class="{ 'bg-black/10 dark:bg-white/10': category == 'user' }"
                         @click="category = 'user'"
                     >
@@ -55,6 +63,7 @@
             </div>
             <div class="md:col-span-3">
                 <BandSyncSettings v-if="category == 'bandSync'" />
+                <SheetMusicSettings v-else-if="category == 'sheetMusic'" />
                 <SettingsCard v-else :category="category" />
             </div>
         </div>
@@ -64,11 +73,11 @@
 <script lang="ts">
 import { application } from "@/classes/application";
 import { SettingsCard } from "@/components";
-import { BandSyncSettings } from "@/components/settings";
+import { BandSyncSettings, SheetMusicSettings } from "@/components/settings";
 import auth from "@/services/auth";
 import { useStore } from "@/store";
 import { UserGroupIcon } from "@heroicons/vue/outline";
-import { CogIcon, LogoutIcon, UserIcon } from "@heroicons/vue/solid";
+import { CogIcon, LogoutIcon, MusicNoteIcon, UserIcon } from "@heroicons/vue/solid";
 import { defineComponent } from "vue";
 
 export default defineComponent({
@@ -77,14 +86,16 @@ export default defineComponent({
         SettingsCard,
         LogoutIcon,
         UserIcon,
+        MusicNoteIcon,
         CogIcon,
         UserGroupIcon,
         BandSyncSettings,
+        SheetMusicSettings,
     },
     data: () => ({
         store: useStore(),
         loading: false,
-        category: "general" as "general" | "user" | "bandSync",
+        category: "general" as "general" | "user" | "bandSync" | "sheetMusic",
     }),
     mounted() {
         application.setTitle(null);

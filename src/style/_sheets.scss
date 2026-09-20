@@ -1,0 +1,42 @@
+// Ink and paper for rendered sheet music.
+//
+// The sheets API returns SVG painted in #000000 on a white background and
+// takes no theme parameter, so the palette is applied on the client from the
+// custom properties `classes/sheetTheme.ts` writes onto <body>. Restyling
+// what is already on screen means a theme change never refetches a sheet.
+//
+// `.sheet-themed` is on the OSMD container and on the settings preview, so
+// what the preview shows is produced by the very same rules as the real page.
+
+.sheet-themed svg {
+    // !important because the server sets the background as an inline style on
+    // the root <svg>. The ink rules below need no such help: ordinary CSS
+    // already outranks the presentation attributes it paints with.
+    background: var(--sheet-paper, #ffffff) !important;
+
+    // Excluding `none` is essential rather than defensive — every staff line,
+    // stem and beam is a stroked path carrying fill='none', and filling those
+    // turns the page into blobs.
+    [stroke]:not([stroke="none"]) {
+        stroke: var(--sheet-ink, #000000);
+    }
+
+    [fill]:not([fill="none"]) {
+        fill: var(--sheet-ink, #000000);
+    }
+}
+
+// Paper is white whatever the screen does, and dark sheets waste toner.
+@media print {
+    .sheet-themed svg {
+        background: #ffffff !important;
+
+        [stroke]:not([stroke="none"]) {
+            stroke: #000000;
+        }
+
+        [fill]:not([fill="none"]) {
+            fill: #000000;
+        }
+    }
+}
