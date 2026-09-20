@@ -330,7 +330,6 @@ export default defineComponent({
                     .writeText(this.code)
                     .catch(() => undefined);
             }
-        }
         },
     },
 });
