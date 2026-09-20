@@ -445,6 +445,60 @@ export default defineComponent({
         },
     },
     methods: {
+        /**
+         * Re-points an open sheet at the song now being shown.
+         *
+         * `sheetMusicOptions` is component state and survives the params-only
+         * route change a band sync follower gets when the leader picks another
+         * song, so without this the previous song's sheet keeps rendering
+         * (its `fileId` drives the OSMD key) while the lyrics and header
+         * around it update.
+         */
+        rebindSheetMusicToCurrentSong() {
+            const current = this.sheetMusicOptions;
+            if (!current?.show) {
+                return;
+            }
+
+            const sheets =
+                this.song?.sheetMusic.filter(
+                    (s) => !s.type.endsWith("sibelius"),
+                ) ?? [];
+
+            if (!sheets.length) {
+                // Nothing to show for this song — fall back to the lyrics.
+                this.sheetMusicOptions = { ...current, show: false };
+                return;
+            }
+
+            if (sheets.some((s) => s.id === current.fileId)) {
+                return;
+            }
+
+            const bandSync = this.store.state.bandSync;
+            const following =
+                bandSync.role === "member" && bandSync.followingLeaderUpdates;
+
+            const sheet = sheets[0];
+            this.sheetMusicOptions = {
+                ...current,
+                fileId: sheet.id,
+                url: sheet.directUrl,
+                type: sheet.type,
+                originalKey: this.song?.originalKey ?? "C",
+                // Followers land on the leader's key; everyone else opens the
+                // new song the way selectSheetMusic would.
+                transposition: following
+                    ? toSheetApiTransposition(
+                        this.store.state.songs.transposition ?? 0,
+                        this.defaultTransposition,
+                    )
+                    : transposer.getRelativeTransposition(
+                        this.defaultTransposition,
+                        true,
+                    ),
+            };
+        },
         setSong(songId: string) {
             this.$router.push({
                 name: "song",
@@ -576,6 +630,8 @@ export default defineComponent({
                 if (loadId !== this.loadGeneration) {
                     return;
                 }
+
+                this.rebindSheetMusicToCurrentSong();
 
                 if (this.song?.hasLyrics && this.collection) {
                     if (this.lyrics?.ContainsChords) {
