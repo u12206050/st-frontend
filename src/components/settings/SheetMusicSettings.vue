@@ -31,7 +31,43 @@
                 {{ $t("settings_sheetLightThemeNote") }}
             </p>
 
-            <div class="grid sm:grid-cols-2 gap-4 mb-4">
+            <label class="block uppercase text-xs tracking-wide mb-1">
+                {{ $t("settings_sheetPreview") }}
+            </label>
+            <SheetPreview :ink="ink" :paper="paper" :label="$t('settings_sheetPreview')" />
+
+            <p v-if="lowContrast" class="text-xs mt-2 text-amber-600 dark:text-amber-400">
+                {{ $t("settings_sheetLowContrast") }}
+            </p>
+
+            <div class="flex flex-wrap gap-4 mt-4">
+                <button
+                    v-for="preset in presets"
+                    :key="preset.id"
+                    type="button"
+                    class="flex flex-col items-center gap-1.5"
+                    @click="selectPreset(preset.id)"
+                >
+                    <span
+                        class="w-14 h-14 rounded-xl flex items-center justify-center font-bold text-lg border-2 transition-colors"
+                        :class="matchedPreset === preset.id ? 'border-primary' : 'border-black/20 dark:border-white/20'"
+                        :style="{ backgroundColor: preset.palette.paper, color: preset.palette.ink }"
+                    >Aa</span>
+                    <span class="text-xs opacity-70">{{ presetLabel(preset.id) }}</span>
+                </button>
+            </div>
+
+            <button
+                type="button"
+                class="flex items-center gap-1 text-xs uppercase tracking-wide opacity-70 mt-4 mb-3"
+                @click="advancedExpanded = !advancedExpanded"
+            >
+                <ChevronUpIcon v-if="advancedExpanded" class="w-3.5 h-3.5" />
+                <ChevronDownIcon v-else class="w-3.5 h-3.5" />
+                {{ $t("settings_sheetAdvanced") }}
+            </button>
+
+            <div v-if="advancedExpanded" class="grid sm:grid-cols-2 gap-4 mb-4">
                 <div>
                     <label class="block uppercase text-xs tracking-wide mb-1" for="sheet-ink">
                         {{ $t("settings_sheetInk") }}
@@ -76,16 +112,7 @@
                 </div>
             </div>
 
-            <label class="block uppercase text-xs tracking-wide mb-1">
-                {{ $t("settings_sheetPreview") }}
-            </label>
-            <SheetPreview :ink="ink" :paper="paper" :label="$t('settings_sheetPreview')" />
-
-            <p v-if="lowContrast" class="text-xs mt-2 text-amber-600 dark:text-amber-400">
-                {{ $t("settings_sheetLowContrast") }}
-            </p>
-
-            <div class="flex justify-end mt-3">
+            <div v-if="advancedExpanded" class="flex justify-end">
                 <BaseButton theme="secondary" :disabled="!isCustomised" @click="reset">
                     {{ $t("settings_sheetResetColors") }}
                 </BaseButton>
@@ -97,7 +124,13 @@
 <script lang="ts">
 import { BaseButton, BaseCard } from "@/components";
 import SheetPreview from "./SheetPreview.vue";
-import sheetTheme, { DEFAULT_DARK } from "@/classes/sheetTheme";
+import sheetTheme, {
+    DEFAULT_DARK,
+    SHEET_PALETTE_PRESETS,
+    SheetPalettePresetId,
+    matchingPreset,
+} from "@/classes/sheetTheme";
+import { ChevronDownIcon, ChevronUpIcon } from "@heroicons/vue/outline";
 import { defineComponent } from "vue";
 
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -122,16 +155,29 @@ export default defineComponent({
         BaseCard,
         BaseButton,
         SheetPreview,
+        ChevronUpIcon,
+        ChevronDownIcon,
     },
     data: () => ({
         alwaysBlackOnWhite: sheetTheme.alwaysBlackOnWhite,
         ink: sheetTheme.ink,
         paper: sheetTheme.paper,
         isDark: document.documentElement.classList.contains("dark"),
+        presets: SHEET_PALETTE_PRESETS,
+        // Open by default only when the current pair isn't a preset —
+        // otherwise the raw pickers stay out of most readers' way. Reset
+        // deterministically whenever matchedPreset changes (see the watcher
+        // below): open for a custom pair, closed once a named preset
+        // applies, while adjusting within the *same* identity (still custom,
+        // or re-picking the active preset) leaves a manual toggle alone.
+        advancedExpanded: matchingPreset({ ink: sheetTheme.ink, paper: sheetTheme.paper }) === null,
     }),
     computed: {
         isCustomised(): boolean {
             return this.ink !== DEFAULT_DARK.ink || this.paper !== DEFAULT_DARK.paper;
+        },
+        matchedPreset(): SheetPalettePresetId | null {
+            return matchingPreset({ ink: this.ink, paper: this.paper });
         },
         /**
          * Staff lines are hairlines, so a pair that merely passes for body
@@ -139,6 +185,11 @@ export default defineComponent({
          */
         lowContrast(): boolean {
             return contrastRatio(this.ink, this.paper) < 4.5;
+        },
+    },
+    watch: {
+        matchedPreset(value: SheetPalettePresetId | null) {
+            this.advancedExpanded = value === null;
         },
     },
     mounted() {
@@ -152,6 +203,16 @@ export default defineComponent({
         toggleAlwaysBlackOnWhite() {
             this.alwaysBlackOnWhite = !this.alwaysBlackOnWhite;
             void sheetTheme.setAlwaysBlackOnWhite(this.alwaysBlackOnWhite);
+        },
+        selectPreset(id: SheetPalettePresetId) {
+            const preset = this.presets.find((p) => p.id === id);
+            if (!preset) return;
+            this.ink = preset.palette.ink;
+            this.paper = preset.palette.paper;
+            void sheetTheme.setColours(preset.palette);
+        },
+        presetLabel(id: SheetPalettePresetId): string {
+            return this.$t(`settings_sheetPreset_${id}`) as string;
         },
         onInk(event: Event) {
             this.commit({ ink: (event.target as HTMLInputElement).value });

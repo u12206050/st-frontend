@@ -28,6 +28,28 @@ export const DEFAULT_DARK: SheetPalette = {
     paper: "#182f34",
 };
 
+export type SheetPalettePresetId = "charcoal" | "sepia" | "amber" | "contrast";
+
+/**
+ * Ready-made ink/paper pairs, so most readers never need a colour picker.
+ * All four clear the 4.5:1 contrast floor `SheetMusicSettings.vue`'s low
+ * contrast warning uses, by a wide margin.
+ */
+export const SHEET_PALETTE_PRESETS: { id: SheetPalettePresetId; palette: SheetPalette }[] = [
+    { id: "charcoal", palette: DEFAULT_DARK },
+    { id: "sepia", palette: { ink: "#5b4636", paper: "#f4ecd8" } },
+    { id: "amber", palette: { ink: "#ffb86b", paper: "#1a1a1a" } },
+    { id: "contrast", palette: { ink: "#ffffff", paper: "#000000" } },
+];
+
+/** The preset this exactly equals, or null when it was custom-picked. */
+export function matchingPreset(palette: SheetPalette): SheetPalettePresetId | null {
+    const found = SHEET_PALETTE_PRESETS.find(
+        (preset) => preset.palette.ink === palette.ink && preset.palette.paper === palette.paper,
+    );
+    return found?.id ?? null;
+}
+
 const KEYS = {
     alwaysBlackOnWhite: "sheetAlwaysBlackOnWhite",
     ink: "sheetInk",
@@ -36,8 +58,10 @@ const KEYS = {
 
 const HEX = /^#[0-9a-f]{6}$/i;
 
+// Lowercased so a hand-typed "#F1F1F4" still string-matches a preset — the
+// colour swatch input already only ever produces lowercase hex.
 function readHex(value: unknown, fallback: string): string {
-    return typeof value === "string" && HEX.test(value) ? value : fallback;
+    return typeof value === "string" && HEX.test(value) ? value.toLowerCase() : fallback;
 }
 
 export class SheetTheme {
